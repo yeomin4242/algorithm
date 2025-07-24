@@ -169,7 +169,7 @@ def main():
     try:
         # Gemini API 설정
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         # 프롬프트 생성 및 API 호출
         prompt = create_gemini_prompt(problem_info, code, args.language)
