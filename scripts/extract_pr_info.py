@@ -1,74 +1,88 @@
-#!/usr/bin/env python3
-"""
-scripts/extract_pr_info.py
-워크플로우로부터 전달받은 파일 경로에서 작성자, 문제 번호 등의 정보를 추출합니다.
-"""
-
+# scripts/extract_pr_info.py
 import os
 import re
 import sys
+import json
+import subprocess
 
-def extract_info_from_path(file_path):
-    """
-    '이름/문제번호/Main.java' 형식의 파일 경로에서 정보를 추출합니다.
-    - 예시: '민영재/1001/Main.java' -> ('민영재', '1001')
-    """
-    # OS에 상관없이 경로를 처리하기 위해 정규식 사용
-    # 패턴: (슬래시가 아닌 문자들)/(숫자들)/Main.java
-    pattern = re.compile(r"^(?P<author>[^/\\]+)[/\\](?P<problem_id>\d+)[/\\]Main\.java$")
-    match = pattern.match(file_path)
-
-    if match:
-        author = match.group('author')
-        problem_id = match.group('problem_id')
-        print(f"✅ Path analysis successful: Author='{author}', ProblemID='{problem_id}'")
-        return author, problem_id
-
-    print(f"❌ Path analysis failed for: {file_path}. Returning default values.")
-    return 'unknown', '0000'
-
-def write_github_output(data):
-    """추출한 정보를 GitHub Actions의 다음 단계로 전달하기 위해 출력 파일에 씁니다."""
-    output_file = os.environ.get('GITHUB_OUTPUT')
-    if not output_file:
-        print("⚠️ GITHUB_OUTPUT environment variable not set. Cannot pass outputs.")
+def get_pr_files(pr_number, repo):
+    """GitHub API를 사용해 PR의 변경된 파일 목록을 가져옵니다."""
+    print(f"🔍 GitHub API를 통해 PR #{pr_number}의 파일 목록을 조회합니다.")
+    try:
+        command = [
+            'gh', 'api',
+            f'/repos/{repo}/pulls/{pr_number}/files'
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, check=True, encoding='utf-8')
+        files = json.loads(result.stdout)
+        filenames = [file['filename'] for file in files]
+        print(f"✅ API 호출 성공. {len(filenames)}개의 파일 발견.")
+        return filenames
+    except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError) as e:
+        print(f"❌ GitHub API 호출 실패: {e}", file=sys.stderr)
         return
 
-    print("\n📤 Writing to GITHUB_OUTPUT:")
-    with open(output_file, 'a') as f:
-        for key, value in data.items():
-            line = f"{key}={value}\n"
-            f.write(line)
-            print(f"   {line.strip()}")
+def find_solution_file(files):
+    """파일 목록에서 Main.java 파일을 찾습니다."""
+    for file_path in files:
+        if file_path.endswith('/Main.java'):
+            print(f"🎯 솔루션 파일 발견: {file_path}")
+            return file_path
+    return None
+
+def extract_info_from_path(file_path):
+    """파일 경로에서 작성자와 문제 번호를 추출합니다."""
+    # 정규식 패턴: <작성자>/<문제번호>/Main.java
+    match = re.search(r'^([^/]+)/(\d+)/Main\.java$', file_path)
+    if match:
+        author, problem_id = match.groups()
+        print(f"👤 작성자: {author}, 🔢 문제 번호: {problem_id}")
+        return author, problem_id
+    print(f"⚠️ 경로 패턴 매칭 실패: {file_path}", file=sys.stderr)
+    return None, None
+
+def set_github_output(name, value):
+    """GitHub Actions의 출력을 설정합니다."""
+    output_file = os.environ.get('GITHUB_OUTPUT')
+    if output_file:
+        with open(output_file, 'a', encoding='utf-8') as f:
+            f.write(f"{name}={value}\n")
+    print(f"📤 GITHUB_OUTPUT: {name}={value}")
 
 def main():
-    """스크립트의 메인 실행 함수"""
-    print("🚀 Starting PR Info Extraction...")
+    pr_number = os.environ.get('PR_NUMBER')
+    repo = os.environ.get('GITHUB_REPOSITORY')
 
-    # 1. 워크플로우에서 설정한 환경 변수로부터 파일 경로를 읽어옵니다.
-    main_file = os.environ.get('MAIN_JAVA_FILE_PATH')
-
-    if not main_file:
-        print("❌ Error: MAIN_JAVA_FILE_PATH environment variable is not set.")
+    if not pr_number or not repo:
+        print("❌ 환경 변수 PR_NUMBER 또는 GITHUB_REPOSITORY가 설정되지 않았습니다.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"🎯 File path received from workflow: {main_file}")
+    changed_files = get_pr_files(pr_number, repo)
+    if not changed_files:
+        print("❌ PR에서 변경된 파일을 가져올 수 없습니다.", file=sys.stderr)
+        sys.exit(1) # 실패 처리
 
-    # 2. 파일 경로에서 정보 추출
-    author, problem_id = extract_info_from_path(main_file)
+    main_file = find_solution_file(changed_files)
+    
+    if not main_file:
+        print("❌ '.../Main.java' 형식의 파일을 찾을 수 없습니다.", file=sys.stderr)
+        author, problem_id, code_file, language = "unknown", "0000", "dummy/Main.java", "java"
+    else:
+        author, problem_id = extract_info_from_path(main_file)
+        if not author or not problem_id:
+            author, problem_id = "unknown", "0000"
+        code_file = main_file
+        language = "java"
 
-    # 3. 출력할 데이터 구성
-    output_data = {
-        'problem_id': problem_id,
-        'code_file': main_file,
-        'language': 'java' if main_file.endswith('.java') else 'unknown',
-        'author': author
-    }
+    set_github_output('author', author)
+    set_github_output('problem_id', problem_id)
+    set_github_output('code_file', code_file)
+    set_github_output('language', language)
 
-    # 4. 결과를 GitHub Actions 출력으로 전달
-    write_github_output(output_data)
-
-    print("\n✅ Extraction complete!")
+    if author == "unknown" or problem_id == "0000":
+        print("⚠️ 파일 구조 오류로 인해 더미 값을 설정합니다. 후속 작업을 건너뜁니다.")
+    else:
+        print("✅ 정보 추출 완료.")
 
 if __name__ == "__main__":
     main()
