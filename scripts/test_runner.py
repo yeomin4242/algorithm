@@ -32,12 +32,86 @@ class TestRunner:
                     return False, f"컴파일 오류:\n{result.stderr}"
                 
                 self.executable = executable
-                return True, process.stdout.strip()
-            
+                return True, "컴파일 성공"
+                
             except subprocess.TimeoutExpired:
-                return False, "시간 초과"
+                return False, "컴파일 시간 초과"
             except Exception as e:
-                return False, f"실행 예외: {e}"
+                return False, f"컴파일 예외: {e}"
+        
+        elif self.language == 'java':
+            try:
+                result = subprocess.run([
+                    'javac', self.code_file
+                ], capture_output=True, text=True, timeout=30)
+                
+                if result.returncode != 0:
+                    return False, f"컴파일 오류:\n{result.stderr}"
+                
+                # Java 클래스명 추출
+                class_name = Path(self.code_file).stem
+                self.executable = class_name
+                self.java_class_path = Path(self.code_file).parent
+                return True, "컴파일 성공"
+                
+            except subprocess.TimeoutExpired:
+                return False, "컴파일 시간 초과"
+            except Exception as e:
+                return False, f"컴파일 예외: {e}"
+        
+        elif self.language == 'c':
+            try:
+                executable = Path(self.code_file).stem
+                result = subprocess.run([
+                    'gcc', '-o', executable, self.code_file, '-O2'
+                ], capture_output=True, text=True, timeout=30)
+                
+                if result.returncode != 0:
+                    return False, f"컴파일 오류:\n{result.stderr}"
+                
+                self.executable = executable
+                return True, "컴파일 성공"
+                
+            except subprocess.TimeoutExpired:
+                return False, "컴파일 시간 초과"
+            except Exception as e:
+                return False, f"컴파일 예외: {e}"
+        
+        return True, "컴파일 불필요"
+    
+    def run_single_test(self, test_input, timeout=5):
+        """단일 테스트케이스 실행"""
+        try:
+            if self.language == 'python':
+                cmd = ['python3', self.code_file]
+            elif self.language == 'cpp':
+                cmd = [f'./{self.executable}']
+            elif self.language == 'java':
+                cmd = ['java', self.executable]
+            elif self.language == 'c':
+                cmd = [f'./{self.executable}']
+            else:
+                return False, f"지원하지 않는 언어: {self.language}"
+            
+            # 프로세스 실행
+            process = subprocess.run(
+                cmd,
+                input=test_input,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+            
+            if process.returncode != 0:
+                error_msg = process.stderr or "런타임 오류"
+                return False, f"실행 오류: {error_msg}"
+            
+            return True, process.stdout.strip()
+            
+        except subprocess.TimeoutExpired:
+            return False, "시간 초과"
+        except Exception as e:
+            return False, f"실행 예외: {e}"
     
     def run_sample_tests(self, sample_tests_file):
         """샘플 테스트케이스 실행"""
@@ -126,11 +200,19 @@ class TestRunner:
             return False, f"AI 테스트 로드 실패: {e}"
     
     def cleanup(self):
-        """컴파일된 .class 파일 정리"""
+        """컴파일된 파일 정리"""
+        if hasattr(self, 'executable') and self.language in ['cpp', 'c']:
+            try:
+                executable_path = Path(f'./{self.executable}')
+                if executable_path.exists():
+                    executable_path.unlink()
+            except:
+                pass
+        
         if hasattr(self, 'java_class_path'):
             try:
                 # Main.class 파일 삭제
-                class_file = Path(self.java_class_path) / 'Main.class'
+                class_file = Path(self.java_class_path) / f'{self.executable}.class'
                 if class_file.exists():
                     class_file.unlink()
             except:
@@ -227,55 +309,4 @@ def main():
         runner.cleanup()
 
 if __name__ == "__main__":
-    main(), "컴파일 성공"
-                
-            except Exception as e:
-                return False, f"컴파일 예외: {e}"
-        
-        elif self.language == 'java':
-            try:
-                result = subprocess.run([
-                    'javac', self.code_file
-                ], capture_output=True, text=True, timeout=30)
-                
-                if result.returncode != 0:
-                    return False, f"컴파일 오류:\n{result.stderr}"
-                
-                # Java 클래스명 추출
-                class_name = Path(self.code_file).stem
-                self.executable = class_name
-                return True, "컴파일 성공"
-                
-            except Exception as e:
-                return False, f"컴파일 예외: {e}"
-        
-        return True, "컴파일 불필요"
-    
-    def run_single_test(self, test_input, timeout=5):
-        """단일 테스트케이스 실행"""
-        try:
-            if self.language == 'python':
-                cmd = ['python3', self.code_file]
-            elif self.language == 'cpp':
-                cmd = [f'./{self.executable}']
-            elif self.language == 'java':
-                cmd = ['java', self.executable]
-            elif self.language == 'c':
-                cmd = [f'./{self.executable}']
-            else:
-                return False, f"지원하지 않는 언어: {self.language}"
-            
-            # 프로세스 실행
-            process = subprocess.run(
-                cmd,
-                input=test_input,
-                capture_output=True,
-                text=True,
-                timeout=timeout
-            )
-            
-            if process.returncode != 0:
-                error_msg = process.stderr or "런타임 오류"
-                return False, f"실행 오류: {error_msg}"
-            
-            return True
+    main()
