@@ -100,6 +100,8 @@ def create_gemini_prompt(problem_info, code, language):
 def parse_gemini_response(response_text):
     """Gemini 응답에서 JSON 추출 및 파싱"""
     try:
+        if not response_text or not response_text.strip():
+            raise ValueError("API 응답이 비어있습니다.")
         # JSON 블록 찾기
         json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
         if json_match:
@@ -122,6 +124,10 @@ def parse_gemini_response(response_text):
 def validate_test_cases(test_cases, problem_info):
     """생성된 테스트케이스 검증"""
     validated = []
+
+    if not isinstance(test_cases, list):
+        print("⚠️  'test_cases' 필드가 리스트 형식이 아닙니다.")
+        return []
     
     for i, case in enumerate(test_cases):
         try:
