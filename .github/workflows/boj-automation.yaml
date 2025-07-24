@@ -16,6 +16,7 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         fetch-depth: 0
+        ref: ${{ github.event.pull_request.head.sha }}
     
     - name: Setup Python
       uses: actions/setup-python@v4
@@ -40,13 +41,25 @@ jobs:
         PR_NUMBER: ${{ github.event.pull_request.number }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     
+    - name: Skip test if dummy values
+      id: check-skip
+      run: |
+        if [ "${{ steps.extract-info.outputs.problem_id }}" = "0000" ] || [ "${{ steps.extract-info.outputs.author }}" = "unknown" ]; then
+          echo "skip_tests=true" >> $GITHUB_OUTPUT
+          echo "⚠️  파일 구조 오류로 인해 테스트를 건너뜁니다."
+        else
+          echo "skip_tests=false" >> $GITHUB_OUTPUT
+        fi
+    
     - name: Get problem details from BOJ
+      if: steps.check-skip.outputs.skip_tests == 'false'
       id: problem-details
       run: |
         python scripts/fetch_boj_problem.py \
           --problem-id ${{ steps.extract-info.outputs.problem_id }}
     
     - name: Generate test cases with Gemini
+      if: steps.check-skip.outputs.skip_tests == 'false'
       id: generate-tests
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -58,6 +71,7 @@ jobs:
           --problem-info problem_info.json
     
     - name: Run all tests
+      if: steps.check-skip.outputs.skip_tests == 'false'
       id: run-tests
       run: |
         python scripts/test_runner.py \
@@ -67,7 +81,7 @@ jobs:
           --generated-tests generated_tests.json
     
     - name: Update README on success
-      if: steps.run-tests.outputs.result == 'PASS'
+      if: steps.check-skip.outputs.skip_tests == 'false' && steps.run-tests.outputs.result == 'PASS'
       run: |
         python scripts/update_readme.py \
           --problem-id ${{ steps.extract-info.outputs.problem_id }} \
@@ -76,7 +90,7 @@ jobs:
           --language ${{ steps.extract-info.outputs.language }}
     
     - name: Commit README changes
-      if: steps.run-tests.outputs.result == 'PASS'
+      if: steps.check-skip.outputs.skip_tests == 'false' && steps.run-tests.outputs.result == 'PASS'
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
@@ -87,7 +101,7 @@ jobs:
         fi
     
     - name: Auto-merge on success
-      if: steps.run-tests.outputs.result == 'PASS'
+      if: steps.check-skip.outputs.skip_tests == 'false' && steps.run-tests.outputs.result == 'PASS'
       run: |
         gh pr merge ${{ github.event.pull_request.number }} --auto --squash --delete-branch
       env:
@@ -97,24 +111,55 @@ jobs:
       if: always()
       uses: actions/github-script@v6
       with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
           const result = '${{ steps.run-tests.outputs.result }}';
           const details = '${{ steps.run-tests.outputs.details }}';
+          const problemId = '${{ steps.extract-info.outputs.problem_id }}';
+          const author = '${{ steps.extract-info.outputs.author }}';
+          
+          // problemId가 0000이면 파일 구조 오류
+          if (problemId === '0000' || author === 'unknown') {
+            const comment = `## 📁 파일 구조 오류
+            
+            올바른 파일 구조로 제출해주세요:
+            
+            ✅ **올바른 구조**:
+            \`\`\`
+            본인이름/문제번호/Main.java
+            예: alice/1654/Main.java
+            \`\`\`
+            
+            ❌ **잘못된 구조**:
+            - 파일명이 Main.java가 아님
+            - 작성자 디렉토리가 없음  
+            - 문제번호 디렉토리가 없음
+            
+            구조를 수정한 후 다시 푸시해주세요! 📝`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+            return;
+          }
           
           let comment = '';
           if (result === 'PASS') {
             comment = `## ✅ 테스트 통과!
             
-            🎉 모든 테스트케이스를 통과했습니다!
-            - 샘플 테스트: 통과
-            - AI 생성 반례 테스트: 통과
-            - README.md가 자동으로 업데이트되었습니다.
+            🎉 **${author}님의 문제 ${problemId} 해결을 축하합니다!**
+            - ✅ 샘플 테스트: 통과
+            - 🤖 AI 생성 반례 테스트: 통과
+            - 📊 README.md가 자동으로 업데이트되었습니다.
             
             자동으로 병합됩니다! 🚀`;
           } else {
             comment = `## ❌ 테스트 실패
             
-            다음 테스트케이스에서 문제가 발견되었습니다:
+            **${author}님의 문제 ${problemId} 코드에서 문제가 발견되었습니다:**
             
             \`\`\`
             ${details}
@@ -123,12 +168,17 @@ jobs:
             코드를 수정한 후 다시 푸시해주세요! 💪`;
           }
           
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: comment
-          });
+          try {
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+          } catch (error) {
+            console.log('댓글 작성 권한이 없습니다:', error.message);
+            // 댓글 작성 실패해도 워크플로우는 계속 진행
+          }
 
   deadline-reminder:
     if: github.event_name == 'schedule'
