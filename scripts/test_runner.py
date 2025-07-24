@@ -34,10 +34,10 @@ class TestRunner:
                 self.executable = executable
                 return True, process.stdout.strip()
             
-        except subprocess.TimeoutExpired:
-            return False, "시간 초과"
-        except Exception as e:
-            return False, f"실행 예외: {e}"
+            except subprocess.TimeoutExpired:
+                return False, "시간 초과"
+            except Exception as e:
+                return False, f"실행 예외: {e}"
     
     def run_sample_tests(self, sample_tests_file):
         """샘플 테스트케이스 실행"""
