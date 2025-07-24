@@ -121,6 +121,17 @@ def main():
     print("🚀 PR 정보 추출 시작...")
     print("=" * 50)
     
+    # GitHub Actions 환경 정보 출력
+    github_env_vars = [
+        'GITHUB_EVENT_NAME', 'GITHUB_REF', 'GITHUB_HEAD_REF', 'GITHUB_BASE_REF',
+        'GITHUB_REPOSITORY', 'GITHUB_ACTOR', 'GITHUB_SHA'
+    ]
+    
+    print("🔧 GitHub Actions 환경변수:")
+    for var in github_env_vars:
+        value = os.environ.get(var, 'Not set')
+        print(f"  {var}: {value}")
+    
     # 작업 디렉토리 확인 및 조정
     original_dir = os.getcwd()
     print(f"📁 시작 디렉토리: {original_dir}")
@@ -130,78 +141,117 @@ def main():
         os.chdir('..')
         print(f"📁 프로젝트 루트로 이동: {os.getcwd()}")
     
-    # 현재 디렉토리 내용 확인
-    print("📂 현재 디렉토리 내용:")
+    # 현재 디렉토리 내용 확인 (더 상세하게)
+    print("📂 현재 디렉토리 구조:")
     try:
-        for item in os.listdir('.'):
-            if os.path.isdir(item):
-                print(f"  📁 {item}/")
-                # scripts나 .git 같은 시스템 디렉토리가 아닌 경우만 탐색
-                if item not in ['.git', 'scripts', '.github', 'node_modules', '__pycache__']:
-                    try:
-                        for subitem in os.listdir(item):
-                            if os.path.isdir(os.path.join(item, subitem)):
-                                print(f"    📁 {subitem}/")
-                                try:
-                                    for file in os.listdir(os.path.join(item, subitem)):
-                                        print(f"      📄 {file}")
-                                except:
-                                    pass
-                    except:
-                        pass
-            else:
-                print(f"  📄 {item}")
+        items = os.listdir('.')
+        dirs = [item for item in items if os.path.isdir(item)]
+        files = [item for item in items if os.path.isfile(item)]
+        
+        print(f"  📁 디렉토리 ({len(dirs)}개): {dirs}")
+        print(f"  📄 파일 ({len(files)}개): {files[:10]}...")  # 파일은 처음 10개만
+        
+        # 각 디렉토리 내부 확인 (시스템 디렉토리 제외)
+        for item in dirs:
+            if item not in ['.git', 'scripts', '.github', 'node_modules', '__pycache__', '.vscode']:
+                try:
+                    subitems = os.listdir(item)
+                    print(f"    📁 {item}/ 내용: {subitems}")
+                    
+                    # 하위 디렉토리도 확인
+                    for subitem in subitems:
+                        subpath = os.path.join(item, subitem)
+                        if os.path.isdir(subpath):
+                            try:
+                                subfiles = os.listdir(subpath)
+                                main_java_files = [f for f in subfiles if f == 'Main.java']
+                                if main_java_files:
+                                    print(f"      🎯 {item}/{subitem}/Main.java 발견!")
+                                else:
+                                    print(f"      📁 {item}/{subitem}/ 내용: {subfiles}")
+                            except:
+                                pass
+                except Exception as e:
+                    print(f"    ❌ {item}/ 접근 실패: {e}")
     except Exception as e:
-        print(f"❌ 디렉토리 탐색 실패: {e}")
+        print(f"❌ 디렉토리 구조 탐색 실패: {e}")
     
     print("=" * 50)
     
     changed_files = get_changed_files()
     print(f"📁 총 감지된 파일 수: {len(changed_files)}")
     
-    # Main.java 파일 필터링
+    # Main.java 파일 필터링 (더 유연하게)
     java_files = []
     for f in changed_files:
         print(f"🔍 파일 검사: {f}")
-        if f.endswith('Main.java'):
+        
+        # 다양한 Main.java 패턴 확인
+        if f.endswith('Main.java') or f.endswith('/Main.java') or '/Main.java' in f:
             # 절대 경로와 상대 경로 둘 다 확인
-            file_paths_to_check = [f, os.path.join('.', f)]
-            file_exists = False
+            file_paths_to_check = [
+                f, 
+                os.path.join('.', f),
+                f.lstrip('./'),  # ./ 제거
+                f.lstrip('/')    # / 제거
+            ]
             
+            file_exists = False
             for path in file_paths_to_check:
                 if os.path.exists(path):
                     file_exists = True
                     # 정규화된 상대 경로 사용
                     normalized_path = os.path.relpath(path).replace('\\', '/')
-                    java_files.append(normalized_path)
-                    print(f"☕ Valid Java 파일: {normalized_path}")
+                    if normalized_path not in java_files:  # 중복 방지
+                        java_files.append(normalized_path)
+                        print(f"☕ Valid Java 파일: {normalized_path}")
                     break
             
             if not file_exists:
                 print(f"⚠️  파일 존재하지 않음: {f}")
+                # 파일이 존재하지 않더라도 패턴이 맞으면 일단 추가
+                if f.count('/') >= 2 and f.endswith('Main.java'):
+                    java_files.append(f)
+                    print(f"🔄 패턴 매칭으로 추가: {f}")
         else:
             print(f"🚫 Java 파일 아님: {f}")
     
     # 중복 제거
     java_files = list(set(java_files))
     
-    # 파일이 없으면 강제로 모든 Main.java 찾기
+    # 여전히 파일이 없으면 강제 검색
     if not java_files:
-        print("🔄 강제 Main.java 검색...")
-        for root, dirs, files in os.walk('.'):
-            if '.git' in root or 'scripts' in root:
-                continue
-            for file in files:
-                if file == 'Main.java':
-                    full_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(full_path).replace('\\', '/')
-                    java_files.append(rel_path)
-                    print(f"🎯 강제 발견: {rel_path}")
+        print("🔄 강제 Main.java 전체 검색...")
+        
+        # find 명령어 시도
+        try:
+            result = subprocess.run(['find', '.', '-name', 'Main.java', '-type', 'f'], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0 and result.stdout.strip():
+                found_files = result.stdout.strip().split('\n')
+                for f in found_files:
+                    clean_path = f.lstrip('./').replace('\\', '/')
+                    java_files.append(clean_path)
+                    print(f"🔍 find로 발견: {clean_path}")
+        except:
+            pass
+        
+        # Python walk 검색
+        if not java_files:
+            for root, dirs, files in os.walk('.'):
+                if '.git' in root or 'node_modules' in root:
+                    continue
+                for file in files:
+                    if file == 'Main.java':
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(full_path).replace('\\', '/')
+                        java_files.append(rel_path)
+                        print(f"🎯 Python walk로 발견: {rel_path}")
     
     if not java_files:
-        print("❌ Main.java 파일이 발견되지 않았습니다.")
-        print("📋 감지된 모든 파일:")
-        for f in changed_files[:10]:  # 최대 10개만 출력
+        print("❌ Main.java 파일이 최종적으로 발견되지 않았습니다.")
+        print("📋 모든 감지된 파일:")
+        for f in changed_files[:15]:  # 최대 15개 출력
             print(f"  - {f}")
         
         print("\n💡 올바른 파일 구조:")
@@ -227,6 +277,54 @@ def main():
     
     if not problem_id:
         print(f"⚠️  문제 번호 추출 실패, 기본값 사용: {main_file}")
+        problem_id = "0000"
+    
+    if not author:
+        print(f"⚠️  작성자 추출 실패, 기본값 사용: {main_file}")
+        author = "unknown"
+    
+    language = detect_language(main_file)
+    
+    # GitHub Actions 출력
+    output_data = {
+        'problem_id': problem_id,
+        'code_file': main_file,
+        'language': language,
+        'author': author
+    }
+    
+    write_github_output(output_data)
+    
+    print("\n✅ 추출 완료!")
+    print(f"  👤 작성자: {author}")
+    print(f"  🔢 문제 번호: {problem_id}")
+    print(f"  📄 코드 파일: {main_file}")
+    print(f"  💻 언어: {language}")
+
+def write_github_output(data):
+    """GitHub Actions 출력 데이터 쓰기"""
+    print("\n📤 GitHub Actions 출력:")
+    
+    # 환경변수 파일에 출력
+    try:
+        output_file = os.environ.get('GITHUB_OUTPUT')
+        if output_file:
+            with open(output_file, 'a') as f:
+                for key, value in data.items():
+                    f.write(f"{key}={value}\n")
+                    print(f"  {key}={value}")
+        else:
+            # GITHUB_OUTPUT이 없으면 표준 출력으로
+            for key, value in data.items():
+                print(f"::set-output name={key}::{value}")
+    except Exception as e:
+        print(f"❌ 출력 파일 쓰기 실패: {e}")
+        # 표준 출력으로 fallback
+        for key, value in data.items():
+            print(f"::set-output name={key}::{value}")
+
+if __name__ == "__main__":
+    main()⚠️  문제 번호 추출 실패, 기본값 사용: {main_file}")
         problem_id = "0000"
     
     if not author:
