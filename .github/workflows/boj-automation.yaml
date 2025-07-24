@@ -110,8 +110,8 @@ jobs:
       - name: Commit and Push README changes
         if: steps.run-tests.outputs.result == 'PASS'
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          git config --local user.email "${{ github.event.pull_request.user.login }}@users.noreply.github.com"
+          git config --local user.name "${{ github.event.pull_request.user.login }}"
           git add README.md
           if ! git diff --cached --quiet; then
             git commit -m "📊 Update progress: Problem ${{ steps.extract-info.outputs.problem_id }} solved by ${{ steps.extract-info.outputs.author }}"
