@@ -10,6 +10,10 @@ jobs:
   test-and-merge:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # README.md 업데이트를 위해 필요
+      pull-requests: write # PR에 댓글을 작성하기 위해 필요
     
     steps:
     - uses: actions/checkout@v4
