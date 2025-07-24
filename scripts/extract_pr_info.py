@@ -11,7 +11,7 @@ import sys
 def extract_info_from_path(file_path):
     """
     '이름/문제번호/Main.java' 형식의 파일 경로에서 정보를 추출합니다.
-    - 예시: 'minyoungjae/1001/Main.java' -> ('minyoungjae', '1001')
+    - 예시: '민영재/1001/Main.java' -> ('민영재', '1001')
     """
     # OS에 상관없이 경로를 처리하기 위해 정규식 사용
     # 패턴: (슬래시가 아닌 문자들)/(숫자들)/Main.java
@@ -50,7 +50,6 @@ def main():
 
     if not main_file:
         print("❌ Error: MAIN_JAVA_FILE_PATH environment variable is not set.")
-        # 변수가 없으면 오류 처리 (이 경우는 워크플로우에서 이미 처리했어야 함)
         sys.exit(1)
 
     print(f"🎯 File path received from workflow: {main_file}")
