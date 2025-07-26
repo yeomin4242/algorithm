@@ -16,7 +16,7 @@
 ### 🔧 주요 기능
 - **자동 테스트**: 샘플 테스트케이스 + AI 생성 반례 테스트
 - **스마트 채점**: 부분 점수 지원 (샘플만/생성 테스트만 통과)
-- **개인 알림**: Mattermost 개인 DM으로 결과 통知
+- **개인 알림**: Mattermost 개인 DM으로 결과 통지
 - **자동 README 업데이트**: 제출 현황 실시간 반영
 
 ### 🧠 사용 기술
@@ -58,7 +58,7 @@ MATTERMOST_WEBHOOK_URL=your_default_channel_webhook  # 기본 채널용
 ```
 
 #### 4. PR 제출 과정
-1. **브랜치 생성**: `git checkout -b week-N-solutions`  
+1. **브랜치 생성**: `git checkout -b week-N-<githubId>`  
 2. **코드 작성**: 위 구조대로 파일 배치
 3. **PR 생성**: main 브랜치로 Pull Request
 4. **자동 테스트**: GitHub Actions에서 자동 실행
