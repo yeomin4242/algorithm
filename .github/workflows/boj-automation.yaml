@@ -7,7 +7,7 @@ on:
     branches: [main]
   schedule:
     # 디버깅용: 1분마다 실행
-    - cron: "* * * * *"
+    - cron: "*/5 * * * *"
     # 실제 운영용 (주석 처리됨)
     # - cron: "0 0 * * 5"  # 금요일 오전 9시 KST
     # - cron: "0 0 * * 0"  # 일요일 오전 9시 KST
