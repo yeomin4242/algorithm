@@ -1,12 +1,17 @@
 # GitHub Actions 워크플로우 이름
-name: BOJ Study Automation
+name: BOJ Study Automation (Gemini API)
 
 # 워크플로우 실행 조건
 on:
   pull_request:
     branches: [main]
   schedule:
+    # 디버깅용: 1분마다 실행
     - cron: "* * * * *"
+    # 실제 운영용 (주석 처리됨)
+    # - cron: "0 0 * * 5"  # 금요일 오전 9시 KST
+    # - cron: "0 0 * * 0"  # 일요일 오전 9시 KST
+    # - cron: "0 12 * * 0" # 일요일 오후 9시 KST
 
 # 실행될 작업(Job) 목록
 jobs:
@@ -33,7 +38,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.9"
+          python-version: "3.11"
 
       # 3. Java 환경 설정
       - name: Setup Java
@@ -42,272 +47,341 @@ jobs:
           distribution: "temurin"
           java-version: "11"
 
-      # 4. Python 의존성 설치
-      - name: Install dependencies
-        run: pip install google-generativeai pytz selenium webdriver-manager beautifulsoup4 requests playwright
+      # 4. Python 의존성 설치 (Gemini API 기반)
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install google-genai pytz beautifulsoup4 requests
 
-      - name: Install Playwright browsers
-        run: python -m playwright install --with-deps
+      # 5. Gemini API 환경 테스트 (최신 버전)
+      - name: Test Gemini API environment
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          echo "🤖 Gemini 2.5-flash API 환경 테스트..."
+          echo "Python version: $(python --version)"
 
-      # 5. PR에서 문제 및 코드 정보 추출 (GitHub API 사용으로 변경)
-      - name: Extract problem and code info
+          # Gemini API 키 확인
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "❌ GEMINI_API_KEY가 설정되지 않았습니다."
+            exit 1
+          else
+            echo "✅ GEMINI_API_KEY 설정 확인됨"
+          fi
+
+          # 설치된 라이브러리 확인
+          echo "📦 설치된 라이브러리 확인..."
+          pip list | grep -E "(google|genai)" || echo "⚠️ google 관련 패키지를 찾을 수 없습니다."
+
+          # 별도 Python 파일 생성 및 실행
+          echo "📦 google-genai 라이브러리 테스트..."
+          cat > test_gemini_api.py << 'EOF'
+          import os
+          import sys
+
+          print("🔍 Gemini 2.5-flash API 연결 테스트...")
+
+          try:
+              from google import genai
+              from google.genai import types
+              print("✅ google-genai 라이브러리 import 성공")
+              
+              # 클라이언트 설정 테스트
+              client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+              print("✅ Gemini 2.5-flash API 클라이언트 생성 성공")
+              
+              # 간단한 테스트 요청
+              print("🧪 간단한 API 테스트 수행...")
+              config = types.GenerateContentConfig(
+                  temperature=0.1,
+                  max_output_tokens=100
+              )
+              
+              response = client.models.generate_content(
+                  model="gemini-2.5-flash",
+                  contents="Hello, can you respond with just 'API_TEST_SUCCESS'?",
+                  config=config
+              )
+              
+              if hasattr(response, "text") and "API_TEST_SUCCESS" in response.text:
+                  print("✅ Gemini 2.5-flash API 테스트 완료")
+                  sys.exit(0)
+              else:
+                  text = response.text if hasattr(response, "text") else "No text"
+                  print(f"⚠️ API 응답 확인: {text}")
+                  print("✅ API 연결은 성공했으나 응답 형식이 예상과 다름")
+                  sys.exit(0)
+                  
+          except ImportError as e:
+              print(f"❌ google-genai 라이브러리 import 실패: {e}")
+              print("다음 명령어로 설치하세요: pip install google-genai")
+              sys.exit(1)
+          except Exception as e:
+              print(f"❌ Gemini 2.5-flash API 연결 실패: {e}")
+              print("API 키 또는 네트워크 연결을 확인하세요.")
+              sys.exit(1)
+          EOF
+              
+          # Python 파일 실행
+          python test_gemini_api.py
+
+          # 네트워크 연결 테스트
+          echo "📡 네트워크 연결 테스트..."
+          curl -I https://generativelanguage.googleapis.com/ --max-time 10 || echo "⚠️ Gemini API 엔드포인트 직접 접근 제한됨"
+          curl -I https://solved.ac/ --max-time 10 || echo "⚠️ solved.ac 접근 제한됨"
+
+      # 6. PR에서 변경된 파일들 및 문제 정보 추출
+      - name: Extract changed files and problem info
         id: extract-info
-        run: python scripts/extract_pr_info.py # 스크립트 내부에서 API를 호출하도록 변경
+        run: |
+          echo "🔍 PR에서 변경된 파일들 분석 중..."
+          python scripts/extract_pr_info.py
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # 6. 파일 구조 및 유효성 확인
+
+      # 7. 파일 구조 및 유효성 확인
       - name: Check valid problems
         id: check-validity
         run: |
           HAS_VALID_PROBLEMS="${{ steps.extract-info.outputs.has_valid_problems }}"
-          PROBLEM_ID="${{ steps.extract-info.outputs.problem_id }}"
+          TOTAL_PROBLEMS="${{ steps.extract-info.outputs.total_problems_count }}"
 
-          if [ "$HAS_VALID_PROBLEMS" = "false" ] || [ "$PROBLEM_ID" = "0000" ]; then
+          if [ "$HAS_VALID_PROBLEMS" = "false" ] || [ "$TOTAL_PROBLEMS" = "0" ]; then
             echo "skip_tests=true" >> $GITHUB_OUTPUT
             echo "⚠️ 분석할 수 있는 유효한 문제가 없습니다."
           else
             echo "skip_tests=false" >> $GITHUB_OUTPUT
-            echo "✅ 유효한 문제를 발견했습니다. 테스트를 진행합니다."
+            echo "✅ $TOTAL_PROBLEMS개의 유효한 문제를 발견했습니다."
           fi
 
-      # 7. solved.ac API로 문제 정보 가져오기
-      - name: Get problem details from solved.ac
+      # 8. 다중 문제 테스트 실행
+      - name: Run multi-problem tests
         if: steps.check-validity.outputs.skip_tests == 'false'
-        run: |
-          python scripts/fetch_boj_problem.py \
-            --problem-id ${{ steps.extract-info.outputs.problem_id }}
-
-      # 8. Gemini API로 반례 테스트케이스 생성
-      - name: Generate test cases with Gemini
-        if: steps.check-validity.outputs.skip_tests == 'false'
+        id: run-tests
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          python scripts/gemini_test_generator.py \
-            --problem-id ${{ steps.extract-info.outputs.problem_id }} \
-            --code-file ${{ steps.extract-info.outputs.code_file }} \
-            --language ${{ steps.extract-info.outputs.language }} \
-            --problem-info problem_info.json
+          echo "🚀 다중 문제 테스트 시작..."
+          python scripts/multi_test_runner.py
+        continue-on-error: true
 
-      # 9. 모든 테스트 실행
-      - name: Run all tests
+      # 9. 테스트 결과 분석
+      - name: Analyze test results
         if: steps.check-validity.outputs.skip_tests == 'false'
-        id: run-tests
+        id: analyze-results
         run: |
-          python scripts/test_runner.py \
-            --code-file ${{ steps.extract-info.outputs.code_file }} \
-            --language ${{ steps.extract-info.outputs.language }} \
-            --sample-tests sample_tests.json \
-            --generated-tests generated_tests.json
+          if [ -f "test_results_summary.json" ]; then
+            echo "📊 테스트 결과 분석 중..."
+            
+            # Python으로 결과 분석
+            python scripts/analyze_test_results.py
+          else
+            echo "❌ 테스트 결과 파일을 찾을 수 없습니다."
+            echo "overall_result=FAIL" >> $GITHUB_OUTPUT
+            echo "total_problems=0" >> $GITHUB_OUTPUT
+          fi
 
-      # 10. 테스트 통과 시 README.md 업데이트
-      - name: Update README on success
-        if: steps.run-tests.outputs.result == 'PASS'
+      # 10. README.md 업데이트 (성공한 문제들만)
+      - name: Update README for successful problems
+        if: steps.analyze-results.outputs.overall_result == 'PASS'
         run: |
-          python scripts/update_readme.py \
-            --problem-id ${{ steps.extract-info.outputs.problem_id }} \
-            --author ${{ steps.extract-info.outputs.author }} \
-            --submission-date $(date '+%Y-%m-%d') \
-            --language ${{ steps.extract-info.outputs.language }}
+          if [ -f "test_results_summary.json" ]; then
+            echo "📊 테스트 결과 분석 중..."
+            python scripts/update_readme_batch.py
+          fi
 
-      # 11. README.md 변경사항을 PR 브랜치에 커밋 및 푸시
+      # 11. 테스트 완료 확인
+      - name: Verify test completion
+        if: steps.check-validity.outputs.skip_tests == 'false'
+        run: |
+          echo "📊 테스트 완료 확인..."
+
+          if [ -f "test_results_summary.json" ]; then
+            echo "✅ 테스트 결과 파일 존재"
+            echo "📄 결과 요약:"
+            cat test_results_summary.json | python -m json.tool | head -20
+          else
+            echo "❌ 테스트 결과 파일 없음"
+          fi
+
+      # 14. README.md 변경사항을 PR 브랜치에 커밋 및 푸시
       - name: Commit and Push README changes
-        if: steps.run-tests.outputs.result == 'PASS'
+        if: steps.analyze-results.outputs.overall_result == 'PASS'
         run: |
           git config --local user.email "${{ github.event.pull_request.user.login }}@users.noreply.github.com"
           git config --local user.name "${{ github.event.pull_request.user.login }}"
           git add README.md
           if ! git diff --cached --quiet; then
-            git commit -m "📊 Update progress: Problem ${{ steps.extract-info.outputs.problem_id }} solved by ${{ steps.extract-info.outputs.author }}"
+            SUCCESS_COUNT="${{ steps.analyze-results.outputs.passed_problems }}"
+            PARTIAL_COUNT="${{ steps.analyze-results.outputs.partial_passed_problems }}"
+            TOTAL_COUNT="${{ steps.analyze-results.outputs.total_problems }}"
+            
+            git commit -m "📊 Update progress: ${SUCCESS_COUNT}+${PARTIAL_COUNT}/${TOTAL_COUNT} problems solved by ${{ steps.extract-info.outputs.author }}"
             git push origin ${{ github.event.pull_request.head.ref }}
           else
             echo "README.md에 변경사항이 없어 커밋하지 않습니다."
           fi
 
-      # 12. 테스트 통과 시 Mattermost 알림 전송
-      - name: Send Mattermost notification on success
-        if: steps.run-tests.outputs.result == 'PASS'
+      # 15. 상세한 성공 알림 전송
+      - name: Send detailed success notification
+        if: steps.analyze-results.outputs.overall_result == 'PASS'
+        env:
+          PERSONAL_WEBHOOK_URL: ${{ secrets[format('{0}_MATTERMOST_URL', github.event.pull_request.user.login)] }}
         run: |
-          PROBLEM_ID="${{ steps.extract-info.outputs.problem_id }}"
-          AUTHOR="${{ steps.extract-info.outputs.author }}"
-          LANGUAGE="${{ steps.extract-info.outputs.language }}"
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          PR_URL="${{ github.event.pull_request.html_url }}"
-          TOTAL_COUNT="${{ steps.extract-info.outputs.total_problems_count }}"
-          ADDED_COUNT="${{ steps.extract-info.outputs.added_problems_count }}"
-          MODIFIED_COUNT="${{ steps.extract-info.outputs.modified_problems_count }}"
+          echo "📢 성공 알림 전송 중..."
 
-          # 추가 정보 생성
-          EXTRA_INFO=""
-          if [ "$TOTAL_COUNT" != "1" ]; then
-            if [ "$ADDED_COUNT" != "0" ] && [ "$MODIFIED_COUNT" != "0" ]; then
-              EXTRA_INFO="\\n📊 이번 PR: 총 ${TOTAL_COUNT}개 (새 문제 ${ADDED_COUNT}개, 수정 ${MODIFIED_COUNT}개)"
-            elif [ "$ADDED_COUNT" != "0" ]; then
-              EXTRA_INFO="\\n📊 이번 PR: 새 문제 ${ADDED_COUNT}개"
-            elif [ "$MODIFIED_COUNT" != "0" ]; then
-              EXTRA_INFO="\\n📊 이번 PR: 수정된 문제 ${MODIFIED_COUNT}개"
-            fi
+          # 환경변수 확인 (디버깅용)
+          echo "사용자: ${{ github.event.pull_request.user.login }}"
+          if [ -n "$PERSONAL_WEBHOOK_URL" ]; then
+            echo "✅ 개인 웹훅 URL 발견"
+          else
+            echo "⚠️ 개인 웹훅 URL 없음, 기본 채널 사용"
           fi
 
-          cat > payload.json << EOF
-          {
-            "username": "BOJ-Bot",
-            "icon_emoji": ":white_check_mark:",
-            "text": "🎉 Test Passed!\\nProblem: ${PROBLEM_ID}\\nSolver: ${AUTHOR}\\nLanguage: ${LANGUAGE}\\nPR: ${PR_URL}${EXTRA_INFO}"
-          }
-          EOF
+          python scripts/send_success_notification.py "${{ github.event.pull_request.html_url }}" "${{ github.event.pull_request.user.login }}" "$PERSONAL_WEBHOOK_URL"
 
-          curl -X POST \
-            -H "Content-Type: application/json" \
-            -d @payload.json \
-            "${{ secrets.MATTERMOST_WEBHOOK_URL }}" \
-            --fail --silent --show-error
-
-      # 13. 테스트 실패 시 Mattermost 알림 전송
-      - name: Send Mattermost notification on failure
-        if: steps.run-tests.outputs.result == 'FAIL'
+      # 16. 상세한 실패 알림 전송
+      - name: Send detailed failure notification
+        if: steps.analyze-results.outputs.overall_result == 'FAIL'
+        env:
+          PERSONAL_WEBHOOK_URL: ${{ secrets[format('{0}_MATTERMOST_URL', github.event.pull_request.user.login)] }}
         run: |
-          PROBLEM_ID="${{ steps.extract-info.outputs.problem_id }}"
-          AUTHOR="${{ steps.extract-info.outputs.author }}"
-          LANGUAGE="${{ steps.extract-info.outputs.language }}"
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          PR_URL="${{ github.event.pull_request.html_url }}"
+          echo "📢 실패 알림 전송 중..."
 
-          ERROR_DETAILS="${{ steps.run-tests.outputs.details }}"
-          ERROR_DETAILS=$(echo "$ERROR_DETAILS" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed 's/`/\\`/g')
+          # 환경변수 확인 (디버깅용)
+          echo "사용자: ${{ github.event.pull_request.user.login }}"
+          if [ -n "$PERSONAL_WEBHOOK_URL" ]; then
+            echo "✅ 개인 웹훅 URL 발견"
+          else
+            echo "⚠️ 개인 웹훅 URL 없음, 기본 채널 사용"
+          fi
 
-          cat > payload.json << EOF
-          {
-            "username": "BOJ-Bot",
-            "icon_emoji": ":x:",
-            "text": "❌ Test Failed!\\nProblem: ${PROBLEM_ID}\\nSubmitter: ${AUTHOR}\\nLanguage: ${LANGUAGE}\\nPR: ${PR_URL}\\n\\n**Error Details:**\\n\`\`\`\\n${ERROR_DETAILS}\\n\`\`\`\\n\\n💪 Please fix the code and push again!"
-          }
-          EOF
+          # Python으로 상세한 실패 알림 메시지 생성
+          python scripts/send_failure_notification.py "${{ github.event.pull_request.html_url }}" "${{ github.event.pull_request.user.login }}" "$PERSONAL_WEBHOOK_URL"
 
-          curl -X POST \
-            -H "Content-Type: application/json" \
-            -d @payload.json \
-            "${{ secrets.MATTERMOST_WEBHOOK_URL }}" \
-            --fail --silent --show-error
-
-      # 14. PR에 테스트 결과 댓글 작성
-      - name: Comment test results
-        if: always()
+      # 17. PR에 상세한 테스트 결과 댓글 작성
+      - name: Comment detailed test results
+        if: always() && steps.check-validity.outputs.skip_tests == 'false'
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const { result, details } = ${{ toJSON(steps.run-tests.outputs) }};
-            const { 
-              author, 
-              problem_id,
-              has_valid_problems,
-              problems_summary,
-              total_problems_count,
-              is_multiple_problems
-            } = ${{ toJSON(steps.extract-info.outputs) }};
+            const fs = require('fs');
 
-            // 유효한 문제가 없는 경우  
-            if (has_valid_problems === 'false' || problem_id === '0000') {
-              const body = `## 📁 분석할 수 있는 문제가 없습니다
+            // 테스트 결과 로드
+            let results = null;
+            try {
+              if (fs.existsSync('test_results_summary.json')) {
+                const data = fs.readFileSync('test_results_summary.json', 'utf8');
+                results = JSON.parse(data);
+              }
+            } catch (error) {
+              console.log('결과 파일 로드 실패:', error);
+            }
 
-            **${author}**님의 PR에서 분석할 수 있는 Main.java 파일을 찾지 못했습니다.
+            const overall_result = "${{ steps.analyze-results.outputs.overall_result }}";
+            const total_problems = parseInt("${{ steps.analyze-results.outputs.total_problems }}") || 0;
 
-            **확인 사항:**
-            - 파일 경로가 \`본인이름/문제번호/Main.java\` 형식으로 작성되었는지 확인하세요
-            - 실제로 변경사항이 있는 파일인지 확인하세요
-            - PR에 본인의 파일만 포함되어 있는지 확인하세요
+            if (!results || total_problems === 0) {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## ❌ 테스트 실행 실패
+                
+            테스트 결과를 가져올 수 없습니다. 로그를 확인해주세요.`
+              });
+              return;
+            }
 
-            ${problems_summary}
+            // 결과 요약
+            const passed = results.passed_problems || 0;
+            const partial = results.partial_passed_problems || 0;
+            const failed = results.failed_problems || 0;
+            const successRate = Math.round((passed + partial) / Math.max(total_problems, 1) * 100 * 10) / 10;
 
-            올바른 형식으로 파일을 추가한 후 다시 푸시해주세요! 📝`;
-                          
-                          await github.rest.issues.createComment({
-                            issue_number: context.issue.number,
-                            owner: context.repo.owner,
-                            repo: context.repo.repo,
-                            body: body
-                          });
-                          return;
-                        }
+            let body = `## 📊 다중 문제 테스트 결과
 
-                        // 정상적인 테스트 결과 처리
-                        let body;
-                        
-                        // 여러 문제 변경 시 헤더 추가
-                        const multiProblemHeader = is_multiple_problems === 'true' ? 
-                          `## 📊 다중 문제 변경 감지 (총 ${total_problems_count}개)
-                          
-            ${problems_summary}
+            **전체 결과**: ${overall_result === 'PASS' ? '✅ 성공' : '❌ 실패'} (성공률: ${successRate}%)
 
-            **현재 테스트**: 문제 ${problem_id} (우선순위 최상위)
+            | 구분 | 완전 성공 | 부분 성공 | 실패 | 전체 |
+            |------|-----------|-----------|------|------|
+            | 개수 | ${passed}개 | ${partial}개 | ${failed}개 | ${total_problems}개 |
 
-            ---
+            `;
 
-            ` : '';
+            // 각 문제별 상세 결과
+            if (results.details && results.details.length > 0) {
+              body += `### 📝 문제별 상세 결과\n\n`;
+              
+              for (const detail of results.details) {
+                const statusEmoji = {
+                  'PASS': '✅',
+                  'PARTIAL_PASS': '⚠️',
+                  'FAIL': '❌',
+                  'ERROR': '💥'
+                }[detail.result] || '❓';
+                
+                body += `#### ${statusEmoji} 문제 ${detail.problem_id} (${detail.author})\n`;
+                body += `- **결과**: ${detail.result}\n`;
+                body += `- **검색**: ${detail.search_success ? '성공' : '실패'}\n`;
+                
+                if (detail.sample_tests && detail.sample_tests.total > 0) {
+                  const st = detail.sample_tests;
+                  body += `- **샘플 테스트**: ${st.passed}/${st.total} 통과\n`;
+                }
+                
+                if (detail.generated_tests && detail.generated_tests.total > 0) {
+                  const gt = detail.generated_tests;
+                  body += `- **생성 테스트**: ${gt.passed}/${gt.total} 통과\n`;
+                }
+                
+                if (detail.errors && detail.errors.length > 0) {
+                  body += `- **오류**: ${detail.errors[0]}\n`;
+                }
+                
+                body += `\n`;
+              }
+            }
 
-                        if (result === 'PASS') {
-                          body = `${multiProblemHeader}## ✅ 테스트 통과!
+            // 결론
+            if (overall_result === 'PASS') {
+              body += `### 🎉 테스트 통과!
+              
+            한 문제 이상이 성공했으므로 **PR이 승인됩니다**.
+            실패한 문제들은 BOJ 사이트에서 직접 확인 후 수정해주세요.
 
-            🎉 **${author}**님의 문제 **${problem_id}** 해결을 축하합니다!
+            브랜치를 병합하고 삭제해주세요! 🚀`;
+            } else {
+              body += `### ❌ 테스트 실패
+              
+            모든 문제가 실패했습니다. 코드를 수정한 후 다시 푸시해주세요.
 
-            - ✅ 샘플 테스트: 통과
-            - 🤖 AI 생성 반례 테스트: 통과  
-            - 📊 README.md가 자동으로 업데이트되었습니다.
+            💡 **팁**: 각 문제별 오류 메시지를 확인하여 수정해보세요.`;
+            }
 
-            ${is_multiple_problems === 'true' ? 
-              `💡 **참고**: 이번 PR에서 변경된 다른 문제들도 동일하게 검증되었을 것으로 간주됩니다.` : 
-              ''}
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
 
-            브랜치 병합하고 삭제해주세요! 🚀`;
-
-                        } else {
-                          body = `${multiProblemHeader}## ❌ 테스트 실패
-
-            **${author}**님의 문제 **${problem_id}** 코드에서 문제가 발견되었습니다:
-
-            \`\`\`
-            ${details}
-            \`\`\`
-
-            ${is_multiple_problems === 'true' ? 
-              `💡 **참고**: 우선순위가 가장 높은 문제부터 테스트합니다. 이 문제를 해결한 후 다시 푸시하면 다른 문제들도 함께 검증됩니다.` : 
-              ''}
-
-            코드를 수정한 후 다시 푸시해주세요! 💪`;
-                        }
-                        
-                        await github.rest.issues.createComment({
-                          issue_number: context.issue.number, 
-                          owner: context.repo.owner, 
-                          repo: context.repo.repo, 
-                          body: body
-                        });
-
-      # 15. 다중 문제 알림 (Mattermost)
-      - name: Send multiple problems notification
-        if: steps.extract-info.outputs.multiple_problems == 'true'
-        run: |
-          PROBLEMS_COUNT="${{ steps.extract-info.outputs.problems_count }}"
-          AUTHOR="${{ steps.extract-info.outputs.author }}"
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          PR_URL="${{ github.event.pull_request.html_url }}"
-
-          cat > payload.json << EOF
-          {
-            "username": "BOJ-Bot",
-            "icon_emoji": ":warning:",
-            "text": "⚠️ **다중 문제 제출 감지**\\n\\n**${AUTHOR}**님이 PR #${PR_NUMBER}에서 ${PROBLEMS_COUNT}개의 문제를 동시에 제출했습니다.\\n\\n💡 **권장사항**: 문제별로 개별 PR을 만들어 주세요!\\n\\nPR 링크: ${PR_URL}"
-          }
-          EOF
-
-          curl -X POST \
-            -H "Content-Type: application/json" \
-            -d @payload.json \
-            "${{ secrets.MATTERMOST_WEBHOOK_URL }}" \
-            --fail --silent --show-error
+      # 18. 테스트 결과 업로드 (디버그용)
+      - name: Upload test results
+        if: always() && steps.check-validity.outputs.skip_tests == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.event.pull_request.number }}
+          path: |
+            test_results_summary.json
+            problems_info.json
+            problem_*_info.json
+            tests_*.json
+            sample_*_tests.json
+          retention-days: 7
 
   # 데드라인 알림 작업
   deadline-reminder:
@@ -319,8 +393,15 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: "3.9"
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
       - name: Check deadlines and send reminders
         env:
           MATTERMOST_WEBHOOK_URL: ${{ secrets.MATTERMOST_WEBHOOK_URL }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEBUG_MODE: "true" # 디버깅 모드 활성화
+          # 개인별 webhook URLs (각 참가자별로 설정)
+          yeomin4242_MATTERMOST_URL: ${{ secrets.yeomin4242_MATTERMOST_URL }}
         run: python scripts/deadline_checker.py
