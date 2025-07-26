@@ -44,7 +44,7 @@ Repository Settings → Secrets and variables → Actions에서 다음 설정:
 
 ```
 GEMINI_API_KEY=your_gemini_api_key
-본인깃허브아이디_WEBHOOK_URL=your_personal_webhook  # 개인 DM용 (필수)
+본인깃허브아이디_MATTERMOST_URL=your_personal_webhook  # 개인 DM용 (필수)
 ```
 
 **📱 개인 알림 설정**: 주간 5문제 미달 시 개인 DM 알림을 받으려면 반드시 개인 webhook URL을 설정하세요.

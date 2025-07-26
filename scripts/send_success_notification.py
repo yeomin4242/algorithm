@@ -110,7 +110,7 @@ try:
         print(f'📩 개인 DM으로 알림 전송: {pr_author}')
     elif pr_author:
         # 환경변수에서 개인 웹훅 URL 시도 (우선순위 2)
-        personal_webhook_key = f"{pr_author.upper()}_WEBHOOK_URL"
+        personal_webhook_key = f"{pr_author.upper()}_MATTERMOST_URL"
         webhook_url = os.environ.get(personal_webhook_key)
         
         if webhook_url:

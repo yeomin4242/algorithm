@@ -131,8 +131,8 @@ def get_weekly_problem_count(username):
 
 def send_personal_notification(username, message):
     """사용자별 개인 webhook으로 알림 전송"""
-    # 개인 webhook URL 패턴: {USERNAME}_WEBHOOK_URL (대문자)
-    personal_webhook_key = f"{username.upper()}_WEBHOOK_URL"
+    # 개인 webhook URL 패턴: {USERNAME}_MATTERMOST_URL (대문자)
+    personal_webhook_key = f"{username.upper()}_MATTERMOST_URL"
     personal_webhook_url = os.getenv(personal_webhook_key)
     
     if not personal_webhook_url:
@@ -262,7 +262,7 @@ def send_summary_notification(participants_status, reminder_type, repo_info):
     
     for participant in participants_status:
         username = participant['username']
-        webhook_key = f"{username.upper()}_WEBHOOK_URL"
+        webhook_key = f"{username.upper()}_MATTERMOST_URL"
         webhook_url = os.getenv(webhook_key)
         
         if not webhook_url:
@@ -437,7 +437,7 @@ def main():
         if participants_status:
             first_participant = participants_status[0]
             username = first_participant['username']
-            webhook_key = f"{username.upper()}_WEBHOOK_URL"
+            webhook_key = f"{username.upper()}_MATTERMOST_URL"
             webhook_url = os.getenv(webhook_key)
             
             if webhook_url:
