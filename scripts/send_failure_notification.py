@@ -63,22 +63,18 @@ try:
         webhook_url = personal_webhook_url
         print(f'📩 개인 DM으로 알림 전송: {pr_author}')
     elif pr_author:
-        # 환경변수에서 개인 웹훅 URL 시도 (백업, 우선순위 2)
-        personal_webhook_key = f"{pr_author.upper()}_MATTERMOST_URL"
+        # 환경변수에서 개인 웹훅 URL 시도 (우선순위 2)
+        personal_webhook_key = f"{pr_author.upper()}_WEBHOOK_URL"
         webhook_url = os.environ.get(personal_webhook_key)
         
         if webhook_url:
             print(f'📩 환경변수에서 개인 DM으로 알림 전송: {pr_author}')
         else:
-            print(f'⚠️ {personal_webhook_key} 환경변수가 설정되지 않았습니다. 기본 채널로 전송합니다.')
-    
-    # 개인 웹훅이 없으면 기본 채널 웹훅 사용 (우선순위 3)
-    if not webhook_url:
-        webhook_url = os.environ.get('MATTERMOST_WEBHOOK_URL')
-        print('📢 기본 채널로 알림 전송')
+            print(f'❌ {personal_webhook_key} 환경변수가 설정되지 않았습니다.')
+            sys.exit(0)
     
     if not webhook_url:
-        print('❌ 사용 가능한 MATTERMOST 웹훅 URL이 없습니다.')
+        print('❌ 사용 가능한 개인 웹훅 URL이 없습니다.')
         sys.exit(0)
     
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:

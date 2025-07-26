@@ -131,17 +131,12 @@ def get_weekly_problem_count(username):
 
 def send_personal_notification(username, message):
     """사용자별 개인 webhook으로 알림 전송"""
-    # 개인 webhook URL 패턴: {USERNAME}_MATTERMOST_URL
-    personal_webhook_key = f"{username}_MATTERMOST_URL"
+    # 개인 webhook URL 패턴: {USERNAME}_WEBHOOK_URL (대문자)
+    personal_webhook_key = f"{username.upper()}_WEBHOOK_URL"
     personal_webhook_url = os.getenv(personal_webhook_key)
     
-    # 개인 webhook이 없으면 기본 채널 사용
     if not personal_webhook_url:
-        print(f"⚠️ {username}의 개인 webhook이 설정되지 않음, 기본 채널 사용")
-        personal_webhook_url = os.getenv('MATTERMOST_WEBHOOK_URL')
-    
-    if not personal_webhook_url:
-        print(f"❌ {username}에게 보낼 webhook URL이 없습니다.")
+        print(f"❌ {username}의 개인 webhook이 설정되지 않음 ({personal_webhook_key})")
         return False
     
     payload = {
@@ -260,12 +255,19 @@ def create_personal_reminder_message(username, problem_count, reminder_type, rep
     return message
 
 def send_summary_notification(participants_status, reminder_type, repo_info):
-    """전체 요약 알림을 기본 채널로 전송"""
-    webhook_url = os.getenv('MATTERMOST_WEBHOOK_URL')
+    """전체 요약 알림을 모든 참가자에게 개인 DM으로 전송"""
+    # 모든 참가자에게 개인 DM으로 요약 전송
+    success_count = 0
+    total_participants = len(participants_status)
     
-    if not webhook_url:
-        print("기본 채널 webhook URL이 설정되지 않았습니다.")
-        return False
+    for participant in participants_status:
+        username = participant['username']
+        webhook_key = f"{username.upper()}_WEBHOOK_URL"
+        webhook_url = os.getenv(webhook_key)
+        
+        if not webhook_url:
+            print(f"⚠️ {username}의 개인 webhook이 설정되지 않음 ({webhook_key})")
+            continue
     
     kst = pytz.timezone('Asia/Seoul')
     now = datetime.now(kst)
@@ -315,7 +317,6 @@ def send_summary_notification(participants_status, reminder_type, repo_info):
     message += """
 ---
 💡 **참고사항**:
-- 개인별 상세 알림은 각자 DM으로 발송되었습니다
 - 마감: 매주 일요일 23:59 KST
 - 목표: 주당 5문제 이상 해결
 
@@ -331,15 +332,16 @@ def send_summary_notification(participants_status, reminder_type, repo_info):
     try:
         response = requests.post(webhook_url, json=payload)
         if response.status_code == 200:
-            print("✅ 전체 요약 알림 전송 성공")
-            return True
+            success_count += 1
+            print(f"✅ {username}에게 요약 알림 전송 성공")
         else:
-            print(f"❌ 전체 요약 알림 전송 실패: {response.status_code}")
-            return False
+            print(f"❌ {username}에게 요약 알림 전송 실패: {response.status_code}")
             
     except Exception as e:
-        print(f"❌ 전체 요약 알림 전송 예외: {e}")
-        return False
+        print(f"❌ {username}에게 요약 알림 전송 예외: {e}")
+    
+    print(f"✅ 전체 요약 알림 전송 완료: {success_count}/{total_participants}명")
+    return success_count > 0
 
 def main():
     """메인 실행 함수"""
@@ -431,16 +433,23 @@ def main():
 *디버깅 모드에서 모든 메시지 타입을 테스트했습니다.*
 """
         
-        # 전체 요약을 기본 채널로 전송
-        webhook_url = os.getenv('MATTERMOST_WEBHOOK_URL')
-        if webhook_url:
-            payload = {
-                "text": debug_summary_message,
-                "username": "Algorithm Study Debug Bot",
-                "icon_emoji": ":bug:"
-            }
-            requests.post(webhook_url, json=payload)
-            print("✅ 디버깅 모드 전체 요약 알림 전송 완료")
+        # 디버깅 모드에서는 첫 번째 참가자에게만 요약 전송
+        if participants_status:
+            first_participant = participants_status[0]
+            username = first_participant['username']
+            webhook_key = f"{username.upper()}_WEBHOOK_URL"
+            webhook_url = os.getenv(webhook_key)
+            
+            if webhook_url:
+                payload = {
+                    "text": debug_summary_message,
+                    "username": "Algorithm Study Debug Bot",
+                    "icon_emoji": ":bug:"
+                }
+                requests.post(webhook_url, json=payload)
+                print(f"✅ 디버깅 모드 요약 알림 전송 완료 ({username})")
+            else:
+                print(f"⚠️ 디버깅 모드 요약 전송 실패: {webhook_key} 설정되지 않음")
     
     else:
         # 일반 모드: 기존 로직

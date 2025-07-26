@@ -28,6 +28,5 @@ jobs:
       - name: Run deadline checker
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MATTERMOST_WEBHOOK_URL: ${{ secrets.MATTERMOST_WEBHOOK_URL }}
           DEBUG_MODE: "true" # 디버깅 모드 활성화
         run: python scripts/deadline_checker.py
