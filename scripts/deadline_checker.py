@@ -12,49 +12,51 @@ from datetime import datetime, timedelta
 import pytz
 import re
 
+
 def get_repository_info():
     """GitHub 레포지토리 정보 가져오기"""
     try:
         # GitHub API를 통해 레포지토리 정보 가져오기
-        token = os.getenv('GITHUB_TOKEN')
-        repo = os.getenv('GITHUB_REPOSITORY')  # 예: 'username/repo-name'
-        
+        token = os.getenv("GITHUB_TOKEN")
+        repo = os.getenv("GITHUB_REPOSITORY")  # 예: 'username/repo-name'
+
         if not token or not repo:
             print("GitHub 환경변수가 설정되지 않았습니다.")
             return None
-        
+
         headers = {
-            'Authorization': f'token {token}',
-            'Accept': 'application/vnd.github.v3+json'
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github.v3+json",
         }
-        
+
         # 레포지토리 기본 정보
         repo_url = f"https://api.github.com/repos/{repo}"
         response = requests.get(repo_url, headers=headers)
-        
+
         if response.status_code == 200:
             return response.json()
         else:
             print(f"GitHub API 오류: {response.status_code}")
             return None
-            
+
     except Exception as e:
         print(f"레포지토리 정보 조회 실패: {e}")
         return None
 
+
 def get_current_reminder_type():
     """현재 시간에 따른 알림 타입 결정"""
     # 디버깅 모드: 모든 메시지 타입 테스트
-    if os.getenv('DEBUG_MODE') == 'true':
+    if os.getenv("DEBUG_MODE") == "true":
         return "debug_all"
-    
-    kst = pytz.timezone('Asia/Seoul')
+
+    kst = pytz.timezone("Asia/Seoul")
     now = datetime.now(kst)
-    
+
     # 금요일 오전 9시 알림
     if now.weekday() == 4 and 8 <= now.hour < 10:  # 금요일, 8-10시 사이
         return "friday_morning"
-    # 일요일 오전 9시 알림  
+    # 일요일 오전 9시 알림
     elif now.weekday() == 6 and 8 <= now.hour < 10:  # 일요일, 8-10시 사이
         return "sunday_morning"
     # 일요일 오후 9시 알림
@@ -63,88 +65,100 @@ def get_current_reminder_type():
     else:
         return "general"
 
+
 def get_participants_from_directory():
     """디렉토리 구조에서 참가자 목록 추출"""
     participants = []
     try:
-        # 현재 디렉토리의 모든 하위 디렉토리 검사  
-        for item in os.listdir('.'):
-            if os.path.isdir(item) and item not in ['.git', '.github', 'scripts', '__pycache__', '.cursor', 'docs']:
+        # 현재 디렉토리의 모든 하위 디렉토리 검사
+        for item in os.listdir("."):
+            if os.path.isdir(item) and item not in [
+                ".git",
+                ".github",
+                "scripts",
+                "__pycache__",
+                ".cursor",
+                "docs",
+            ]:
                 participants.append(item)
-        
+
         print(f"📁 발견된 참가자 디렉토리: {participants}")
         return participants
-        
+
     except Exception as e:
         print(f"디렉토리에서 참가자 추출 실패: {e}")
         return []
 
+
 def get_weekly_problem_count(username):
     """특정 사용자의 일주일간 해결한 문제 수 계산"""
     try:
-        token = os.getenv('GITHUB_TOKEN')
-        repo = os.getenv('GITHUB_REPOSITORY')
-        
+        token = os.getenv("GITHUB_TOKEN")
+        repo = os.getenv("GITHUB_REPOSITORY")
+
         if not token or not repo:
             return 0
-        
+
         headers = {
-            'Authorization': f'token {token}',
-            'Accept': 'application/vnd.github.v3+json'
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github.v3+json",
         }
-        
+
         # 일주일 전 날짜
         week_ago = datetime.now() - timedelta(days=7)
         since_date = week_ago.isoformat()
-        
+
         # 최근 병합된 PR 조회 (해당 사용자만)
         pr_url = f"https://api.github.com/repos/{repo}/pulls?state=closed&since={since_date}&per_page=100"
         response = requests.get(pr_url, headers=headers)
-        
+
         problem_count = 0
         if response.status_code == 200:
             prs = response.json()
-            
+
             for pr in prs:
                 # 해당 사용자가 작성하고 병합된 PR만 확인
-                if pr.get('merged_at') and pr['user']['login'] == username:
+                if pr.get("merged_at") and pr["user"]["login"] == username:
                     # PR의 파일 변경사항 조회
-                    files_url = pr['url'] + '/files'
+                    files_url = pr["url"] + "/files"
                     files_response = requests.get(files_url, headers=headers)
-                    
+
                     if files_response.status_code == 200:
                         files = files_response.json()
-                        
+
                         # 해당 사용자 디렉토리의 문제 파일들 카운트
                         for file in files:
-                            file_path = file['filename']
+                            file_path = file["filename"]
                             # username/문제번호/Main.java 패턴 확인
-                            if file_path.startswith(f"{username}/") and file_path.endswith('/Main.java'):
-                                if file['status'] in ['added', 'modified']:
+                            if file_path.startswith(
+                                f"{username}/"
+                            ) and file_path.endswith("/Main.java"):
+                                if file["status"] in ["added", "modified"]:
                                     problem_count += 1
-        
+
         return problem_count
-        
+
     except Exception as e:
         print(f"주간 문제 수 계산 실패 ({username}): {e}")
         return 0
+
 
 def send_personal_notification(username, message):
     """사용자별 개인 webhook으로 알림 전송"""
     # 개인 webhook URL 패턴: {USERNAME}_MATTERMOST_URL (대문자)
     personal_webhook_key = f"{username.upper()}_MATTERMOST_URL"
     personal_webhook_url = os.getenv(personal_webhook_key)
-    
+
     if not personal_webhook_url:
         print(f"❌ {username}의 개인 webhook이 설정되지 않음 ({personal_webhook_key})")
         return False
-    
+
     payload = {
         "text": message,
         "username": "Algorithm Study Bot",
-        "icon_emoji": ":robot_face:"
+        "icon_emoji": ":robot_face:",
     }
-    
+
     try:
         response = requests.post(personal_webhook_url, json=payload)
         if response.status_code == 200:
@@ -153,19 +167,22 @@ def send_personal_notification(username, message):
         else:
             print(f"❌ {username}에게 개인 알림 전송 실패: {response.status_code}")
             return False
-            
+
     except Exception as e:
         print(f"❌ {username}에게 개인 알림 전송 예외: {e}")
         return False
 
+
 def create_personal_reminder_message(username, problem_count, reminder_type, repo_info):
     """개인별 알림 메시지 생성"""
-    kst = pytz.timezone('Asia/Seoul')
+    kst = pytz.timezone("Asia/Seoul")
     now = datetime.now(kst)
-    
-    repo_name = repo_info.get('name', 'Algorithm Study') if repo_info else 'Algorithm Study'
-    repo_url = repo_info.get('html_url', '') if repo_info else ''
-    
+
+    repo_name = (
+        repo_info.get("name", "Algorithm Study") if repo_info else "Algorithm Study"
+    )
+    repo_url = repo_info.get("html_url", "") if repo_info else ""
+
     # 알림 타입별 메시지 구성
     if reminder_type == "friday_morning":
         urgency = "📅 **주간 중간 체크**"
@@ -183,7 +200,7 @@ def create_personal_reminder_message(username, problem_count, reminder_type, rep
         urgency = "📢 **알림**"
         time_context = "정기"
         deadline_msg = "이번 주 일요일 23:59까지"
-    
+
     message = f"""
 {urgency} @{username}님께 개인 알림
 
@@ -197,7 +214,7 @@ def create_personal_reminder_message(username, problem_count, reminder_type, rep
 - **부족한 문제**: {max(0, 5 - problem_count)}개
 
 """
-    
+
     if problem_count >= 5:
         message += """
 🎉 **축하합니다!** 이번 주 목표를 달성하셨네요! 👏
@@ -236,7 +253,7 @@ def create_personal_reminder_message(username, problem_count, reminder_type, rep
 
 꾸준히 참여해주세요! 💪
 """
-    
+
     message += f"""
 ---
 📋 **제출 방법**:
@@ -251,34 +268,37 @@ def create_personal_reminder_message(username, problem_count, reminder_type, rep
 
 *이 메시지는 자동으로 전송되었습니다. ({time_context} 알림)*
 """
-    
+
     return message
+
 
 def send_summary_notification(participants_status, reminder_type, repo_info):
     """전체 요약 알림을 모든 참가자에게 개인 DM으로 전송"""
     # 모든 참가자에게 개인 DM으로 요약 전송
     success_count = 0
     total_participants = len(participants_status)
-    
+
     for participant in participants_status:
-        username = participant['username']
+        username = participant["username"]
         webhook_key = f"{username.upper()}_MATTERMOST_URL"
         webhook_url = os.getenv(webhook_key)
-        
+
         if not webhook_url:
             print(f"⚠️ {username}의 개인 webhook이 설정되지 않음 ({webhook_key})")
             continue
-    
-    kst = pytz.timezone('Asia/Seoul')
+
+    kst = pytz.timezone("Asia/Seoul")
     now = datetime.now(kst)
-    
-    repo_name = repo_info.get('name', 'Algorithm Study') if repo_info else 'Algorithm Study'
-    
+
+    repo_name = (
+        repo_info.get("name", "Algorithm Study") if repo_info else "Algorithm Study"
+    )
+
     # 통계 계산
     total_participants = len(participants_status)
-    achieved_goal = len([p for p in participants_status if p['problem_count'] >= 5])
-    need_reminder = len([p for p in participants_status if p['problem_count'] < 5])
-    
+    achieved_goal = len([p for p in participants_status if p["problem_count"] >= 5])
+    need_reminder = len([p for p in participants_status if p["problem_count"] < 5])
+
     # 알림 타입별 제목
     if reminder_type == "friday_morning":
         title = "📅 **주간 중간 체크 요약** (금요일 오전)"
@@ -288,7 +308,7 @@ def send_summary_notification(participants_status, reminder_type, repo_info):
         title = "🚨 **마감 임박 요약** (일요일 저녁)"
     else:
         title = "📊 **스터디 현황 요약**"
-    
+
     message = f"""
 {title}
 
@@ -301,19 +321,21 @@ def send_summary_notification(participants_status, reminder_type, repo_info):
 - **알림 대상**: {need_reminder}명 (5개 미만)
 
 """
-    
+
     if participants_status:
         message += "👥 **참가자별 현황**:\n"
         for participant in participants_status:
-            status_emoji = "✅" if participant['problem_count'] >= 5 else "⚠️"
+            status_emoji = "✅" if participant["problem_count"] >= 5 else "⚠️"
             message += f"- {status_emoji} **{participant['username']}**: {participant['problem_count']}문제\n"
-        
+
         message += "\n"
-    
+
     if need_reminder > 0:
-        need_reminder_users = [p['username'] for p in participants_status if p['problem_count'] < 5]
+        need_reminder_users = [
+            p["username"] for p in participants_status if p["problem_count"] < 5
+        ]
         message += f"🔔 **개인 알림 발송 대상**: {', '.join(need_reminder_users)}\n\n"
-    
+
     message += """
 ---
 💡 **참고사항**:
@@ -322,13 +344,13 @@ def send_summary_notification(participants_status, reminder_type, repo_info):
 
 *이 메시지는 자동으로 전송되었습니다.*
 """
-    
+
     payload = {
         "text": message,
         "username": "Algorithm Study Bot",
-        "icon_emoji": ":chart_with_upwards_trend:"
+        "icon_emoji": ":chart_with_upwards_trend:",
     }
-    
+
     try:
         response = requests.post(webhook_url, json=payload)
         if response.status_code == 200:
@@ -336,85 +358,90 @@ def send_summary_notification(participants_status, reminder_type, repo_info):
             print(f"✅ {username}에게 요약 알림 전송 성공")
         else:
             print(f"❌ {username}에게 요약 알림 전송 실패: {response.status_code}")
-            
+
     except Exception as e:
         print(f"❌ {username}에게 요약 알림 전송 예외: {e}")
-    
+
     print(f"✅ 전체 요약 알림 전송 완료: {success_count}/{total_participants}명")
     return success_count > 0
 
+
 def main():
     """메인 실행 함수"""
-    is_debug_mode = os.getenv('DEBUG_MODE') == 'true'
-    print(f"🤖 주간 문제 해결 현황 체크 및 개인 알림 시작... {'(디버깅 모드)' if is_debug_mode else ''}")
-    
+    is_debug_mode = os.getenv("DEBUG_MODE") == "true"
+    print(
+        f"🤖 주간 문제 해결 현황 체크 및 개인 알림 시작... {'(디버깅 모드)' if is_debug_mode else ''}"
+    )
+
     # 1. 레포지토리 정보 가져오기
     repo_info = get_repository_info()
     if not repo_info:
         print("❌ 레포지토리 정보를 가져올 수 없습니다.")
         return
-    
+
     print(f"📁 레포지토리: {repo_info.get('name', 'Unknown')}")
-    
+
     # 2. 현재 알림 타입 결정
     reminder_type = get_current_reminder_type()
     print(f"⏰ 알림 타입: {reminder_type}")
-    
+
     # 3. 참가자 목록 가져오기 (디렉토리 기반)
     participants = get_participants_from_directory()
     if not participants:
         print("❌ 참가자 목록을 찾을 수 없습니다.")
         return
-    
+
     print(f"👥 참가자 수: {len(participants)}명")
     print(f"👥 참가자: {', '.join(participants)}")
-    
+
     # 4. 각 참가자별 주간 문제 해결 수 체크
     participants_status = []
     for username in participants:
         problem_count = get_weekly_problem_count(username)
-        participants_status.append({
-            'username': username,
-            'problem_count': problem_count
-        })
+        participants_status.append(
+            {"username": username, "problem_count": problem_count}
+        )
         print(f"📊 {username}: {problem_count}문제")
-    
+
     # 5. 5개 미만인 사용자들에게 개인 알림 발송
-    need_reminder_users = [p for p in participants_status if p['problem_count'] < 5]
+    need_reminder_users = [p for p in participants_status if p["problem_count"] < 5]
     print(f"🔔 개인 알림 필요: {len(need_reminder_users)}명")
-    
+
     if is_debug_mode and reminder_type == "debug_all":
         # 디버깅 모드: 세 가지 메시지 타입을 모두 테스트
         message_types = [
             ("friday_morning", "금요일 오전"),
-            ("sunday_morning", "일요일 오전"), 
-            ("sunday_evening", "일요일 저녁")
+            ("sunday_morning", "일요일 오전"),
+            ("sunday_evening", "일요일 저녁"),
         ]
-        
+
         total_success = 0
         total_sent = 0
-        
+
         for msg_type, description in message_types:
             print(f"\n🧪 [{description}] 메시지 타입 테스트 중...")
-            
+
             for participant in need_reminder_users:
-                username = participant['username']
-                problem_count = participant['problem_count']
-                
+                username = participant["username"]
+                problem_count = participant["problem_count"]
+
                 # 디버깅용 메시지에 타입 표시 추가
-                message = create_personal_reminder_message(username, problem_count, msg_type, repo_info)
+                message = create_personal_reminder_message(
+                    username, problem_count, msg_type, repo_info
+                )
                 debug_message = f"🧪 **[{description} 메시지 테스트]**\n\n{message}\n\n---\n*이것은 디버깅 모드 테스트 메시지입니다.*"
-                
+
                 if send_personal_notification(username, debug_message):
                     total_success += 1
                 total_sent += 1
-                
+
                 # 메시지 간 간격 (API 제한 방지)
                 import time
+
                 time.sleep(2)
-        
+
         print(f"✅ 디버깅 모드 알림 성공: {total_success}/{total_sent}건")
-        
+
         # 디버깅 모드 전체 요약
         debug_summary_message = f"""
 🧪 **디버깅 모드 실행 완료**
@@ -432,44 +459,47 @@ def main():
 ---
 *디버깅 모드에서 모든 메시지 타입을 테스트했습니다.*
 """
-        
+
         # 디버깅 모드에서는 첫 번째 참가자에게만 요약 전송
         if participants_status:
             first_participant = participants_status[0]
-            username = first_participant['username']
+            username = first_participant["username"]
             webhook_key = f"{username.upper()}_MATTERMOST_URL"
             webhook_url = os.getenv(webhook_key)
-            
+
             if webhook_url:
                 payload = {
                     "text": debug_summary_message,
                     "username": "Algorithm Study Debug Bot",
-                    "icon_emoji": ":bug:"
+                    "icon_emoji": ":bug:",
                 }
                 requests.post(webhook_url, json=payload)
                 print(f"✅ 디버깅 모드 요약 알림 전송 완료 ({username})")
             else:
                 print(f"⚠️ 디버깅 모드 요약 전송 실패: {webhook_key} 설정되지 않음")
-    
+
     else:
         # 일반 모드: 기존 로직
         success_count = 0
         for participant in need_reminder_users:
-            username = participant['username']
-            problem_count = participant['problem_count']
-            
-            message = create_personal_reminder_message(username, problem_count, reminder_type, repo_info)
-            
+            username = participant["username"]
+            problem_count = participant["problem_count"]
+
+            message = create_personal_reminder_message(
+                username, problem_count, reminder_type, repo_info
+            )
+
             if send_personal_notification(username, message):
                 success_count += 1
-        
+
         print(f"✅ 개인 알림 성공: {success_count}/{len(need_reminder_users)}건")
-        
+
         # 6. 전체 요약을 기본 채널로 전송
         if send_summary_notification(participants_status, reminder_type, repo_info):
             print("✅ 전체 요약 알림 전송 완료")
-    
+
     print("🎯 주간 문제 체크 및 알림 완료!")
+
 
 if __name__ == "__main__":
     main()
