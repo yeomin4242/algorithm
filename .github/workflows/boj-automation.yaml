@@ -68,28 +68,24 @@ jobs:
           fi
         continue-on-error: true
 
-      # 이 단계는 PR 댓글 및 README 업데이트만 담당하도록 명확화
+      - name: Run PR Logic - Analyze Results
+        if: github.event_name == 'pull_request' && steps.pr-test.outcome == 'success'
+        id: analyze-results
+        run: python scripts/analyze_test_results.py
+
       - name: Run PR Logic - Update README & Post Comment
-        if: github.event_name == 'pull_request'
-        id: analyze-and-comment 
+        if: github.event_name == 'pull_request' && steps.analyze-results.outcome == 'success'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            if (!fs.existsSync('test_results_summary.json')) {
-              // ... (기존 스크립트 내용과 동일)
-              return;
-            }
+            const exec = require('@actions/exec');
             const results = JSON.parse(fs.readFileSync('test_results_summary.json', 'utf8'));
             const { overall_success, passed_problems, partial_passed_problems, failed_problems, total_problems } = results;
-            
-            // GitHub Actions의 다음 스텝에서 사용할 수 있도록 결과를 output으로 설정
-            core.setOutput('overall_success', overall_success);
 
             if (overall_success) {
-              const exec = require('@actions/exec');
               await exec.exec('python', ['scripts/update_readme_batch.py']);
               const gitStatus = await exec.getExecOutput('git', ['status', '--porcelain']);
               if (gitStatus.stdout.includes('README.md')) {
@@ -101,32 +97,30 @@ jobs:
               }
             }
             
-            // PR 댓글 생성 및 작성 로직 (기존과 동일)
-            let body = `## 📊 테스트 결과 요약\n\n`;
-            body += `| 전체 | ✅ 성공 | ⚠️ 부분 성공 | ❌ 실패 |\n`;
-            body += `|:---:|:---:|:---:|:---:|\n`;
-            body += `| ${total_problems}개 | ${passed_problems}개 | ${partial_passed_problems}개 | ${failed_problems}개 |\n\n`;
+            let commentBody = `## 📊 테스트 결과 요약\n\n`;
+            commentBody += `| 전체 | ✅ 성공 | ⚠️ 부분 성공 | ❌ 실패 |\n`;
+            commentBody += `|:---:|:---:|:---:|:---:|\n`;
+            commentBody += `| ${total_problems}개 | ${passed_problems}개 | ${partial_passed_problems}개 | ${failed_problems}개 |\n\n`;
             if (overall_success) {
-              body += `\n---\n🎉 **테스트 통과!** PR을 병합할 수 있습니다.`;
+              commentBody += `\n---\n🎉 **테스트 통과!** PR을 병합할 수 있습니다.`;
             } else {
-              body += `\n---\n❌ **테스트 실패.** 코드를 수정한 후 다시 푸시해주세요.`;
+              commentBody += `\n---\n❌ **테스트 실패.** 코드를 수정한 후 다시 푸시해주세요.`;
             }
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: body
+              body: commentBody
             });
 
-      # Mattermost DM 알림 전송 단계
+      # Mattermost DM 알림을 보내기 위해 별도 단계 추가
       - name: Send Mattermost DM Notification
-        if: github.event_name == 'pull_request' && always() && steps.analyze-and-comment.outputs.overall_success != ''
+        if: github.event_name == 'pull_request' && steps.analyze-results.outcome == 'success'
         env:
-          # PR 작성자의 개인 Webhook URL을 동적으로 가져옵니다.
           PERSONAL_WEBHOOK_URL: ${{ secrets[format('{0}_MATTERMOST_URL', github.event.pull_request.user.login)] }}
         run: |
-          # 이전 스텝의 결과(성공/실패)에 따라 다른 스크립트를 실행합니다.
-          if [ "${{ steps.analyze-and-comment.outputs.overall_success }}" = "true" ]; then
+          # 테스트 결과(성공/실패)에 따라 다른 스크립트를 실행합니다.
+          if [ "${{ steps.analyze-results.outputs.overall_result }}" = "PASS" ]; then
             echo "✅ 테스트 성공! 성공 알림을 전송합니다."
             python scripts/send_success_notification.py "${{ github.event.pull_request.html_url }}" "${{ github.event.pull_request.user.login }}" "$PERSONAL_WEBHOOK_URL"
           else
