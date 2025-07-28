@@ -45,7 +45,6 @@ MATTERMOST_WEBHOOK_URL=your_default_channel_webhook  # 기본 채널용
 ```
 
 **📱 개인 알림 설정**: 주간 5문제 미달 시 개인 DM 알림을 받으려면 반드시 개인 webhook URL을 설정하세요. 
-자세한 설정 방법은 `docs/개인알림_설정가이드.md`를 참고하세요.
 
 #### 3. 디렉토리 구조
 ```
