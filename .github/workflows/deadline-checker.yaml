@@ -26,5 +26,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           YEOMIN4242_MATTERMOST_URL: ${{ secrets.YEOMIN4242_MATTERMOST_URL }}
-          # ... (다른 참가자도 추가)
+          WANGHORENG_MATTERMOST_URL: ${{ secrets.WANGHORENG_MATTERMOST_URL }}
         run: python scripts/deadline_checker.py
