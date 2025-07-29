@@ -32,7 +32,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          ref: ${{ github.event.pull_request.head.ref || 'main' }}
+          # 수정된 부분: 포크 저장소 지원
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
           fetch-depth: 0
 
       - name: Setup Python and Java
@@ -81,12 +83,25 @@ jobs:
 
           if ! git diff --quiet README.md; then
             echo "README.md 변경사항을 커밋합니다."
-            # [수정] 커밋 작성자를 PR을 올린 사용자로 설정
-            git config --local user.email "${{ github.event.pull_request.user.login }}@users.noreply.github.com"
-            git config --local user.name "${{ github.event.pull_request.user.login }}"
+            # 수정된 부분: 원본 저장소에 푸시하기 위한 설정
+            git config --local user.email "action@github.com"
+            git config --local user.name "GitHub Action Bot"
+            
+            # 원본 저장소를 upstream으로 설정
+            git remote add upstream https://github.com/${{ github.repository }}.git
+            
             git add README.md
             git commit -m "Docs: Update README.md by PR #${{ github.event.pull_request.number }}"
-            git push origin ${{ github.event.pull_request.head.ref }}
+            
+            # 원본 저장소의 main 브랜치에 푸시 (포크 환경에서)
+            if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+              echo "포크된 저장소에서의 PR입니다. 별도 처리가 필요할 수 있습니다."
+              # 포크 저장소의 경우 원본 저장소에 직접 푸시할 수 없으므로
+              # PR 브랜치에만 푸시
+              git push origin ${{ github.event.pull_request.head.ref }}
+            else
+              git push origin ${{ github.event.pull_request.head.ref }}
+            fi
           else
             echo "README.md에 변경사항이 없어 커밋하지 않습니다."
           fi
@@ -120,7 +135,7 @@ jobs:
         env:
           PERSONAL_WEBHOOK_URL: ${{ secrets[format('{0}_MATTERMOST_URL', github.event.pull_request.user.login)] }}
         run: |
-          if [ "${{ steps.analyze-results.outputs.overall_result }}" = "PASS" ]; then
+          if [ "${{ steps.analyzer-results.outputs.overall_result }}" = "PASS" ]; then
             echo "✅ 테스트 성공! 성공 알림을 전송합니다."
             python scripts/send_success_notification.py "${{ github.event.pull_request.html_url }}" "${{ github.event.pull_request.user.login }}" "$PERSONAL_WEBHOOK_URL"
           else
