@@ -1,7 +1,7 @@
 # 워크플로우 이름: 알고리즘 스터디 자동화 (Approve 기반)
-# 두 가지 PR 전략 지원:
+# 두 가지 PR 전략 지원 (모두 week-N-<githubID> 브랜치 규칙 적용):
 # 1. 소유자(yeomin4242)가 원본 저장소에서 직접 브랜치를 생성하고 PR -> 원본 저장소 README 업데이트
-# 2. 외부 기여자가 원본 저장소를 포크(Fork)한 후, 자신의 저장소에서 PR -> 포크된 저장소 README 업데이트
+# 2. 외부 기여자가 원본 저장소를 포크(Fork)한 후, 자신의 저장소에서 PR -> 원본 저장소 README 업데이트
 name: Algorithm Study Automation (Approve Based)
 
 on:
@@ -82,42 +82,41 @@ jobs:
           AUTHOR="${{ github.event.pull_request.user.login }}"
           HEAD_REPO="${{ github.event.pull_request.head.repo.full_name }}"
           BASE_REPO="${{ github.repository }}"
-          REPO_OWNER="${{ env.REPO_OWNER }}"
           EVENT_NAME="${{ github.event_name }}"
           
-          # 전략 2 확인: 포크된 저장소에서 온 PR인지 확인합니다.
           IS_FORK="false"
           if [ "$HEAD_REPO" != "$BASE_REPO" ]; then IS_FORK="true"; fi
           
-          # 전략 1 확인: 저장소 소유자가 보낸 PR인지 확인합니다.
           IS_OWNER="false"
-          if [ "$AUTHOR" = "$REPO_OWNER" ]; then IS_OWNER="true"; fi
+          if [ "$AUTHOR" = "${{ env.REPO_OWNER }}" ]; then IS_OWNER="true"; fi
           
-          # 리뷰 승인(approve) 이벤트인지 확인합니다.
           IS_APPROVED="false"
           if [ "$EVENT_NAME" = "pull_request_review" ] && [ "${{ github.event.review.state }}" = "approved" ]; then
             IS_APPROVED="true"
           fi
           
-          VALIDATION_RESULT="valid"
-          VALIDATION_MESSAGE=""
-          WEEK_NUMBER="owner" # 기본값은 소유자용
-          BRANCH_USER="$AUTHOR"
+          # --- 브랜치 규칙 검증 (소유자 포함 모든 사용자에게 적용) ---
+          VALIDATION_RESULT="invalid" # 기본적으로 유효하지 않다고 가정
+          WEEK_NUMBER=""
+          BRANCH_USER=""
 
-          # 소유자가 아닌 경우, 브랜치 이름 규칙(week-N-<githubID>)을 검증합니다.
-          if [ "$IS_OWNER" = "false" ]; then
-            if [[ $BRANCH_NAME =~ ^week-([0-9]+)-(.+)$ ]]; then
-              WEEK_NUMBER="${BASH_REMATCH[1]}"
-              BRANCH_USER="${BASH_REMATCH[2]}"
-              # 포크 PR의 경우, 브랜치의 ID와 PR 작성자 ID가 일치하는지 확인합니다.
-              if [ "$IS_FORK" = "true" ] && [ "$BRANCH_USER" != "$AUTHOR" ]; then
-                VALIDATION_RESULT="invalid"
-                VALIDATION_MESSAGE="포크 환경에서는 자신의 GitHub ID로 브랜치를 생성해야 합니다."
-              fi
+          if [[ $BRANCH_NAME =~ ^week-([0-9]+)-(.+)$ ]]; then
+            # 패턴이 일치하면, 주차와 사용자 ID를 추출합니다.
+            WEEK_NUMBER="${BASH_REMATCH[1]}"
+            BRANCH_USER="${BASH_REMATCH[2]}"
+            
+            # 포크된 저장소에서 온 PR(전략 2)의 경우, 추가 검증을 수행합니다.
+            if [ "$IS_FORK" = "true" ] && [ "$BRANCH_USER" != "$AUTHOR" ]; then
+              # 브랜치에 명시된 사용자 ID와 PR 작성자가 다르면 유효하지 않습니다.
+              VALIDATION_MESSAGE="포크 환경에서는 브랜치 이름의 GitHub ID('<githubID>')가 본인의 ID와 일치해야 합니다."
             else
-              VALIDATION_RESULT="invalid"
-              VALIDATION_MESSAGE="브랜치 이름이 week-N-<githubID> 패턴을 따르지 않습니다."
+              # 패턴이 일치하고, (필요시) 포크 검증을 통과하면 유효합니다.
+              VALIDATION_RESULT="valid"
+              VALIDATION_MESSAGE="✅ 올바른 브랜치 패턴입니다."
             fi
+          else
+            # 패턴 자체가 일치하지 않는 경우
+            VALIDATION_MESSAGE="브랜치 이름이 week-N-<githubID> 패턴을 따르지 않습니다. (예: week-1-${AUTHOR})"
           fi
           
           # 검증 결과를 다음 스텝에서 사용할 수 있도록 출력 변수로 설정합니다.
@@ -157,7 +156,7 @@ jobs:
         if: github.event_name == 'pull_request_target' && steps.branch-validation.outputs.valid == 'valid'
         uses: actions/checkout@v4
         with:
-          # PR을 보낸 사람의 저장소(원본 또는 포크)와 브랜치를 체크아웃합니다.
+          # PR을 보낸 사람의 저장소(원본 또는 포크)와 브랜치를 직접 체크아웃합니다.
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.ref }}
 
@@ -205,7 +204,7 @@ jobs:
             commentBody += `|:---:|:---:|:---:|:---:|\n`;
             commentBody += `| ${total_problems}개 | ${passed_problems}개 | ${partial_passed_problems}개 | ${failed_problems}개 |\n\n`;
             commentBody += `### 🎯 다음 단계\n`;
-            commentBody += `✅ **이 PR을 approve하면 README가 자동으로 업데이트됩니다!**\n\n`;
+            commentBody += `✅ **이 PR을 approve하면 원본 저장소의 README가 자동으로 업데이트됩니다!**\n\n`;
             commentBody += `---\n🎉 **테스트가 완료되었습니다!**`;
 
             await github.rest.issues.createComment({
@@ -218,15 +217,13 @@ jobs:
       # =================================================================
       #  README 업데이트 로직 (Approve 시에만 실행)
       # =================================================================
-      - name: Checkout Target Repo for README update
+      - name: Checkout Base Repo for README update
         if: github.event_name == 'pull_request_review' && steps.branch-validation.outputs.is_approved == 'true' && steps.branch-validation.outputs.valid == 'valid'
         uses: actions/checkout@v4
         with:
-          # 포크 PR이면 포크된 레포, 아니면 원본 레포를 체크아웃합니다.
-          repository: ${{ steps.branch-validation.outputs.is_fork == 'true' && github.event.pull_request.head.repo.full_name || github.repository }}
-          # 해당 레포의 기본 브랜치(주로 main)를 체크아웃합니다.
-          ref: ${{ steps.branch-validation.outputs.is_fork == 'true' && github.event.pull_request.head.repo.default_branch || 'main' }}
-          # 쓰기 작업을 위해 토큰 전달. 포크된 레포에 쓰려면 해당 레포에서 권한 설정이 필요할 수 있습니다.
+          # README 업데이트는 항상 원본 저장소에서 수행합니다.
+          repository: ${{ github.repository }}
+          ref: 'main'
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate analysis file from PR
@@ -270,19 +267,10 @@ jobs:
         if: github.event_name == 'pull_request_review' && steps.branch-validation.outputs.is_approved == 'true' && steps.branch-validation.outputs.valid == 'valid'
         id: generate-commit-message
         run: |
-          IS_OWNER="${{ steps.branch-validation.outputs.is_owner }}"
-          IS_FORK="${{ steps.branch-validation.outputs.is_fork }}"
-          WEEK_NUMBER="${{ steps.branch-validation.outputs.week_number }}"
           BRANCH_USER="${{ steps.branch-validation.outputs.branch_user }}"
+          WEEK_NUMBER="${{ steps.branch-validation.outputs.week_number }}"
           PR_NUMBER="${{ github.event.pull_request.number }}"
-
-          if [ "$IS_FORK" = "true" ]; then
-            COMMIT_MSG="docs: Update README for week-${WEEK_NUMBER} by ${BRANCH_USER} (from PR #${PR_NUMBER})"
-          elif [ "$IS_OWNER" = "true" ]; then
-            COMMIT_MSG="docs: Update README after owner PR #${PR_NUMBER}"
-          else
-            COMMIT_MSG="docs: Update README for week-${WEEK_NUMBER} by ${BRANCH_USER} (PR #${PR_NUMBER})"
-          fi
+          COMMIT_MSG="docs: Update README for week-${WEEK_NUMBER} by ${BRANCH_USER} (PR #${PR_NUMBER})"
           echo "commit_message=$COMMIT_MSG" >> $GITHUB_OUTPUT
 
       - name: Commit and Push README.md
@@ -290,7 +278,7 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: ${{ steps.generate-commit-message.outputs.commit_message }}
-          branch: ${{ steps.branch-validation.outputs.is_fork == 'true' && github.event.pull_request.head.repo.default_branch || 'main' }}
+          branch: main
           commit_user_name: GitHub Action Bot
           commit_user_email: action@github.com
           file_pattern: README.md
@@ -301,17 +289,12 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const weekNumber = '${{ steps.branch-validation.outputs.week_number }}';
             const branchUser = '${{ steps.branch-validation.outputs.branch_user }}';
             const isOwner = '${{ steps.branch-validation.outputs.is_owner }}' === 'true';
-            const isFork = '${{ steps.branch-validation.outputs.is_fork }}' === 'true';
-            const headRepo = '${{ github.event.pull_request.head.repo.full_name }}';
             
             let commentBody = `## 🎉 README 업데이트 완료!\n\n`;
             
-            if (isFork) {
-              commentBody += `✅ **${branchUser}님의 제출이 승인되어, 포크된 저장소(\`${headRepo}\`)의 README가 업데이트되었습니다.**\n\n`;
-            } else if (isOwner) {
+            if (isOwner) {
               commentBody += `👑 **저장소 소유자(${branchUser})의 제출이 승인되어 원본 저장소의 README가 업데이트되었습니다.**\n\n`;
             } else {
               commentBody += `✅ **${branchUser}님의 제출이 승인되어 원본 저장소의 README가 업데이트되었습니다.**\n\n`;
