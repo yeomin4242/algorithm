@@ -1,7 +1,7 @@
 # 워크플로우 이름: 알고리즘 스터디 자동화 (Approve 기반)
 # 두 가지 PR 전략 지원:
-# 1. 소유자(yeomin4242)가 원본 저장소에서 직접 브랜치를 생성하고 PR
-# 2. 외부 기여자가 원본 저장소를 포크(Fork)한 후, 자신의 저장소에서 PR
+# 1. 소유자(yeomin4242)가 원본 저장소에서 직접 브랜치를 생성하고 PR -> 원본 저장소 README 업데이트
+# 2. 외부 기여자가 원본 저장소를 포크(Fork)한 후, 자신의 저장소에서 PR -> 포크된 저장소 README 업데이트
 name: Algorithm Study Automation (Approve Based)
 
 on:
@@ -218,11 +218,15 @@ jobs:
       # =================================================================
       #  README 업데이트 로직 (Approve 시에만 실행)
       # =================================================================
-      - name: Checkout main branch for README update
+      - name: Checkout Target Repo for README update
         if: github.event_name == 'pull_request_review' && steps.branch-validation.outputs.is_approved == 'true' && steps.branch-validation.outputs.valid == 'valid'
         uses: actions/checkout@v4
         with:
-          ref: 'main'
+          # 포크 PR이면 포크된 레포, 아니면 원본 레포를 체크아웃합니다.
+          repository: ${{ steps.branch-validation.outputs.is_fork == 'true' && github.event.pull_request.head.repo.full_name || github.repository }}
+          # 해당 레포의 기본 브랜치(주로 main)를 체크아웃합니다.
+          ref: ${{ steps.branch-validation.outputs.is_fork == 'true' && github.event.pull_request.head.repo.default_branch || 'main' }}
+          # 쓰기 작업을 위해 토큰 전달. 포크된 레포에 쓰려면 해당 레포에서 권한 설정이 필요할 수 있습니다.
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate analysis file from PR
@@ -267,11 +271,14 @@ jobs:
         id: generate-commit-message
         run: |
           IS_OWNER="${{ steps.branch-validation.outputs.is_owner }}"
+          IS_FORK="${{ steps.branch-validation.outputs.is_fork }}"
           WEEK_NUMBER="${{ steps.branch-validation.outputs.week_number }}"
           BRANCH_USER="${{ steps.branch-validation.outputs.branch_user }}"
           PR_NUMBER="${{ github.event.pull_request.number }}"
 
-          if [ "$IS_OWNER" = "true" ]; then
+          if [ "$IS_FORK" = "true" ]; then
+            COMMIT_MSG="docs: Update README for week-${WEEK_NUMBER} by ${BRANCH_USER} (from PR #${PR_NUMBER})"
+          elif [ "$IS_OWNER" = "true" ]; then
             COMMIT_MSG="docs: Update README after owner PR #${PR_NUMBER}"
           else
             COMMIT_MSG="docs: Update README for week-${WEEK_NUMBER} by ${BRANCH_USER} (PR #${PR_NUMBER})"
@@ -283,7 +290,7 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: ${{ steps.generate-commit-message.outputs.commit_message }}
-          branch: main
+          branch: ${{ steps.branch-validation.outputs.is_fork == 'true' && github.event.pull_request.head.repo.default_branch || 'main' }}
           commit_user_name: GitHub Action Bot
           commit_user_email: action@github.com
           file_pattern: README.md
@@ -297,13 +304,17 @@ jobs:
             const weekNumber = '${{ steps.branch-validation.outputs.week_number }}';
             const branchUser = '${{ steps.branch-validation.outputs.branch_user }}';
             const isOwner = '${{ steps.branch-validation.outputs.is_owner }}' === 'true';
+            const isFork = '${{ steps.branch-validation.outputs.is_fork }}' === 'true';
+            const headRepo = '${{ github.event.pull_request.head.repo.full_name }}';
             
             let commentBody = `## 🎉 README 업데이트 완료!\n\n`;
             
-            if (isOwner) {
-              commentBody += `👑 **저장소 소유자(${branchUser})의 제출이 승인되어 README가 업데이트되었습니다.**\n\n`;
+            if (isFork) {
+              commentBody += `✅ **${branchUser}님의 제출이 승인되어, 포크된 저장소(\`${headRepo}\`)의 README가 업데이트되었습니다.**\n\n`;
+            } else if (isOwner) {
+              commentBody += `👑 **저장소 소유자(${branchUser})의 제출이 승인되어 원본 저장소의 README가 업데이트되었습니다.**\n\n`;
             } else {
-              commentBody += `✅ **Week ${weekNumber} - ${branchUser}님의 제출이 승인되어 README가 업데이트되었습니다.**\n\n`;
+              commentBody += `✅ **${branchUser}님의 제출이 승인되어 원본 저장소의 README가 업데이트되었습니다.**\n\n`;
             }
             
             commentBody += `이제 이 PR을 안전하게 머지할 수 있습니다! 🚀`;
