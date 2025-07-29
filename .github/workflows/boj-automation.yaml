@@ -17,6 +17,7 @@ env:
   TZ: Asia/Seoul
   PYTHON_VERSION: "3.11"
   JAVA_VERSION: "11"
+  REPO_OWNER: "yeomin4242"  # 저장소 소유자
 
 jobs:
   test-and-update:
@@ -27,41 +28,204 @@ jobs:
           echo "🔥 알고리즘 스터디 자동화 워크플로우 시작"
           echo "⏰ 실행 시간: $(date '+%Y-%m-%d %H:%M:%S KST')"
           echo "🔧 트리거: ${{ github.event_name }}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "🔍 Repository: ${{ github.repository }}"
+            echo "🌿 Head Repository: ${{ github.event.pull_request.head.repo.full_name }}"
+            echo "🌿 Head Ref: ${{ github.event.pull_request.head.ref }}"
+            echo "👤 PR Author: ${{ github.event.pull_request.user.login }}"
+          fi
 
+      # 브랜치 전략 검증 및 권한 확인
+      - name: Validate Branch Strategy and Permissions
+        if: github.event_name == 'pull_request'
+        id: branch-validation
+        run: |
+          BRANCH_NAME="${{ github.event.pull_request.head.ref }}"
+          AUTHOR="${{ github.event.pull_request.user.login }}"
+          HEAD_REPO="${{ github.event.pull_request.head.repo.full_name }}"
+          BASE_REPO="${{ github.repository }}"
+          REPO_OWNER="${{ env.REPO_OWNER }}"
+          
+          echo "🔍 브랜치 전략 검증 시작"
+          echo "📂 Head Repository: $HEAD_REPO"
+          echo "📂 Base Repository: $BASE_REPO"
+          echo "🌿 브랜치: $BRANCH_NAME"
+          echo "👤 PR 작성자: $AUTHOR"
+          echo "👑 저장소 소유자: $REPO_OWNER"
+          
+          # 포크 여부 확인
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "🔀 포크된 저장소에서의 PR입니다."
+            IS_FORK="true"
+          else
+            echo "📍 원본 저장소에서의 PR입니다."
+            IS_FORK="false"
+          fi
+          
+          # 저장소 소유자인지 확인
+          if [ "$AUTHOR" = "$REPO_OWNER" ]; then
+            echo "👑 저장소 소유자의 PR입니다."
+            IS_OWNER="true"
+          else
+            echo "👤 일반 사용자의 PR입니다."
+            IS_OWNER="false"
+          fi
+          
+          # 브랜치 전략 검증
+          VALIDATION_RESULT="valid"
+          VALIDATION_MESSAGE=""
+          
+          if [ "$IS_OWNER" = "true" ]; then
+            # 저장소 소유자는 모든 브랜치 패턴 허용
+            echo "✅ 저장소 소유자는 모든 브랜치 패턴을 사용할 수 있습니다."
+            WEEK_NUMBER="owner"
+            BRANCH_USER="$AUTHOR"
+          else
+            # 일반 사용자는 week-N-<githubID> 패턴 강제
+            if [[ $BRANCH_NAME =~ ^week-([0-9]+)-(.+)$ ]]; then
+              WEEK_NUMBER="${BASH_REMATCH[1]}"
+              BRANCH_USER="${BASH_REMATCH[2]}"
+              
+              echo "✅ 올바른 브랜치 패턴입니다. (week-$WEEK_NUMBER-$BRANCH_USER)"
+              
+              # 포크 환경에서는 브랜치 사용자와 PR 작성자 일치 확인
+              if [ "$IS_FORK" = "true" ]; then
+                if [ "$BRANCH_USER" = "$AUTHOR" ]; then
+                  echo "✅ 포크 환경: 브랜치 사용자와 PR 작성자가 일치합니다."
+                else
+                  echo "❌ 포크 환경: 브랜치 사용자($BRANCH_USER)와 PR 작성자($AUTHOR)가 일치하지 않습니다."
+                  VALIDATION_RESULT="invalid"
+                  VALIDATION_MESSAGE="포크 환경에서는 자신의 GitHub ID로 브랜치를 생성해야 합니다."
+                fi
+              else
+                echo "✅ 원본 저장소: 협업자가 다른 사용자의 브랜치를 생성할 수 있습니다."
+              fi
+            else
+              echo "❌ 일반 사용자는 week-N-<githubID> 패턴을 따라야 합니다."
+              echo "💡 올바른 예시: week-1-$AUTHOR, week-2-$AUTHOR"
+              VALIDATION_RESULT="invalid"
+              VALIDATION_MESSAGE="브랜치 이름이 week-N-<githubID> 패턴을 따르지 않습니다."
+            fi
+          fi
+          
+          # 결과 출력
+          echo "valid=$VALIDATION_RESULT" >> $GITHUB_OUTPUT
+          echo "is_fork=$IS_FORK" >> $GITHUB_OUTPUT
+          echo "is_owner=$IS_OWNER" >> $GITHUB_OUTPUT
+          echo "week_number=$WEEK_NUMBER" >> $GITHUB_OUTPUT
+          echo "branch_user=$BRANCH_USER" >> $GITHUB_OUTPUT
+          echo "validation_message=$VALIDATION_MESSAGE" >> $GITHUB_OUTPUT
+
+      # 브랜치 검증 실패 시 PR에 가이드 코멘트
+      - name: Comment on Invalid Branch Strategy
+        if: github.event_name == 'pull_request' && steps.branch-validation.outputs.valid == 'invalid'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const branchName = '${{ github.event.pull_request.head.ref }}';
+            const author = '${{ github.event.pull_request.user.login }}';
+            const isFork = '${{ steps.branch-validation.outputs.is_fork }}' === 'true';
+            const isOwner = '${{ steps.branch-validation.outputs.is_owner }}' === 'true';
+            const validationMessage = '${{ steps.branch-validation.outputs.validation_message }}';
+            const headRepo = '${{ github.event.pull_request.head.repo.full_name }}';
+            const repoOwner = '${{ env.REPO_OWNER }}';
+            
+            let commentBody = `## ⚠️ 브랜치 전략 검증 실패\n\n`;
+            commentBody += `현재 브랜치: \`${branchName}\`\n`;
+            commentBody += `PR 작성자: \`${author}\`\n`;
+            commentBody += `저장소 타입: ${isFork ? '🔀 포크된 저장소' : '📍 원본 저장소'}\n`;
+            commentBody += `권한: ${isOwner ? '👑 저장소 소유자' : '👤 일반 사용자'}\n\n`;
+            
+            commentBody += `❌ **문제**: ${validationMessage}\n\n`;
+            
+            if (!isOwner) {
+              commentBody += `### 📝 일반 사용자 브랜치 규칙\n`;
+              commentBody += `- **패턴**: \`week-N-<githubID>\`\n`;
+              commentBody += `- **예시**: \`week-1-${author}\`, \`week-2-${author}\`\n\n`;
+              
+              if (isFork) {
+                commentBody += `### 🔧 포크 환경에서의 해결 방법\n`;
+                commentBody += `포크된 저장소(\`${headRepo}\`)에서 다음 명령을 실행하세요:\n\n`;
+                commentBody += `\`\`\`bash\n`;
+                commentBody += `# 올바른 브랜치 이름으로 변경\n`;
+                commentBody += `git branch -m ${branchName} week-1-${author}\n\n`;
+                commentBody += `# 새 브랜치 이름으로 푸시\n`;
+                commentBody += `git push origin week-1-${author}\n\n`;
+                commentBody += `# 기존 브랜치 삭제\n`;
+                commentBody += `git push origin --delete ${branchName}\n`;
+                commentBody += `\`\`\`\n\n`;
+                commentBody += `그 후 새로운 PR을 생성해주세요.`;
+              } else {
+                commentBody += `### 🔧 원본 저장소에서의 해결 방법\n`;
+                commentBody += `\`\`\`bash\n`;
+                commentBody += `git branch -m ${branchName} week-1-${author}\n`;
+                commentBody += `git push origin week-1-${author}\n`;
+                commentBody += `git push origin --delete ${branchName}\n`;
+                commentBody += `\`\`\``;
+              }
+              
+              commentBody += `\n\n### 💡 참고사항\n`;
+              commentBody += `- 저장소 소유자(\`${repoOwner}\`)는 모든 브랜치 패턴을 사용할 수 있습니다.\n`;
+              commentBody += `- 일반 사용자는 보안과 권한 관리를 위해 정해진 패턴을 따라야 합니다.`;
+            }
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: commentBody
+            });
+
+      # 유효한 브랜치에서만 체크아웃 진행
       - name: Checkout Code
+        if: github.event_name != 'pull_request' || steps.branch-validation.outputs.valid == 'valid'
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # 수정된 부분: 포크 저장소 지원
           repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
-          ref: ${{ github.event.pull_request.head.ref || github.ref }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Setup Python and Java
+        if: github.event_name != 'pull_request' || steps.branch-validation.outputs.valid == 'valid'
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - uses: actions/setup-java@v4
+      
+      - name: Setup Java
+        if: github.event_name != 'pull_request' || steps.branch-validation.outputs.valid == 'valid'
+        uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: "temurin"
 
       - name: Install Python dependencies
+        if: github.event_name != 'pull_request' || steps.branch-validation.outputs.valid == 'valid'
         run: |
           python -m pip install --upgrade pip
           pip install google-genai pytz requests beautifulsoup4
 
       # =================================================================
-      #  PR 실행 로직
+      #  PR 실행 로직 (유효한 브랜치에서만 실행)
       # =================================================================
       - name: Run PR Logic - Extract & Test
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && steps.branch-validation.outputs.valid == 'valid'
         id: pr-test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          WEEK_NUMBER: ${{ steps.branch-validation.outputs.week_number }}
+          BRANCH_USER: ${{ steps.branch-validation.outputs.branch_user }}
+          IS_OWNER: ${{ steps.branch-validation.outputs.is_owner }}
         run: |
+          if [ "$IS_OWNER" = "true" ]; then
+            echo "👑 저장소 소유자의 솔루션을 분석합니다."
+          else
+            echo "📅 주차 $WEEK_NUMBER의 $BRANCH_USER님의 솔루션을 분석합니다."
+          fi
+          
           python scripts/extract_pr_info.py
           if [ -f "problems_info.json" ]; then
             python scripts/multi_test_runner.py
@@ -71,57 +235,109 @@ jobs:
         continue-on-error: true
 
       - name: Run PR Logic - Analyze Results
-        if: github.event_name == 'pull_request' && steps.pr-test.outcome != 'skipped'
+        if: github.event_name == 'pull_request' && steps.branch-validation.outputs.valid == 'valid' && steps.pr-test.outcome != 'skipped'
         id: analyze-results
         run: python scripts/analyze_test_results.py
 
       - name: Run PR Logic - Update README and Commit
-        if: github.event_name == 'pull_request' && steps.pr-test.outcome != 'skipped'
+        if: github.event_name == 'pull_request' && steps.branch-validation.outputs.valid == 'valid' && steps.pr-test.outcome != 'skipped'
+        env:
+          WEEK_NUMBER: ${{ steps.branch-validation.outputs.week_number }}
+          BRANCH_USER: ${{ steps.branch-validation.outputs.branch_user }}
+          IS_FORK: ${{ steps.branch-validation.outputs.is_fork }}
+          IS_OWNER: ${{ steps.branch-validation.outputs.is_owner }}
         run: |
-          echo "📝 PR에 제출된 모든 문제에 대해 README 업데이트를 시도합니다."
+          if [ "$IS_OWNER" = "true" ]; then
+            echo "📝 저장소 소유자의 제출에 대해 README 업데이트를 시도합니다."
+          else
+            echo "📝 $WEEK_NUMBER주차 $BRANCH_USER님의 제출에 대해 README 업데이트를 시도합니다."
+          fi
+          
           python scripts/update_readme_batch.py
 
           if ! git diff --quiet README.md; then
             echo "README.md 변경사항을 커밋합니다."
-            # 수정된 부분: 원본 저장소에 푸시하기 위한 설정
+            
+            # Git 설정
             git config --local user.email "action@github.com"
             git config --local user.name "GitHub Action Bot"
             
-            # 원본 저장소를 upstream으로 설정
-            git remote add upstream https://github.com/${{ github.repository }}.git
+            # 커밋 메시지 구성
+            if [ "$IS_OWNER" = "true" ]; then
+              COMMIT_MSG="Docs: Update README.md by owner (PR #${{ github.event.pull_request.number }})"
+            else
+              COMMIT_MSG="Docs: Update README.md for week-$WEEK_NUMBER by $BRANCH_USER (PR #${{ github.event.pull_request.number }})"
+            fi
             
             git add README.md
-            git commit -m "Docs: Update README.md by PR #${{ github.event.pull_request.number }}"
+            git commit -m "$COMMIT_MSG"
             
-            # 원본 저장소의 main 브랜치에 푸시 (포크 환경에서)
-            if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
-              echo "포크된 저장소에서의 PR입니다. 별도 처리가 필요할 수 있습니다."
-              # 포크 저장소의 경우 원본 저장소에 직접 푸시할 수 없으므로
-              # PR 브랜치에만 푸시
-              git push origin ${{ github.event.pull_request.head.ref }}
+            # 포크 환경 처리
+            if [ "$IS_FORK" = "true" ]; then
+              echo "🔀 포크된 저장소 환경입니다."
+              echo "⚠️ 포크 환경에서는 README 업데이트를 PR 머지 후에 처리합니다."
+              echo "📋 변경사항은 PR 머지 시 자동으로 반영됩니다."
+              
+              # 변경사항을 임시 저장 (머지 후 처리용)
+              git stash push -m "README update for PR #${{ github.event.pull_request.number }}"
+              echo "💾 변경사항을 stash에 저장했습니다."
             else
+              echo "📍 원본 저장소 환경입니다."
               git push origin ${{ github.event.pull_request.head.ref }}
+              echo "✅ README 업데이트가 완료되었습니다."
             fi
           else
             echo "README.md에 변경사항이 없어 커밋하지 않습니다."
           fi
 
       - name: Run PR Logic - Post Comment on PR
-        if: github.event_name == 'pull_request' && steps.analyze-results.outcome == 'success'
+        if: github.event_name == 'pull_request' && steps.branch-validation.outputs.valid == 'valid' && steps.analyze-results.outcome == 'success'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
+            const weekNumber = '${{ steps.branch-validation.outputs.week_number }}';
+            const branchUser = '${{ steps.branch-validation.outputs.branch_user }}';
+            const isOwner = '${{ steps.branch-validation.outputs.is_owner }}' === 'true';
+            const isFork = '${{ steps.branch-validation.outputs.is_fork }}' === 'true';
+            
+            // 파일이 존재하는지 확인
+            if (!fs.existsSync('test_results_summary.json')) {
+              console.log('test_results_summary.json 파일이 없습니다.');
+              return;
+            }
+            
             const results = JSON.parse(fs.readFileSync('test_results_summary.json', 'utf8'));
             const { overall_success, passed_problems, partial_passed_problems, failed_problems, total_problems } = results;
             
             let commentBody = `## 📊 테스트 결과 요약\n\n`;
+            
+            if (isOwner) {
+              commentBody += `### 👑 저장소 소유자 제출\n`;
+            } else {
+              commentBody += `### Week ${weekNumber} - ${branchUser}님의 제출\n`;
+            }
+            
             commentBody += `| 전체 | ✅ 성공 | ⚠️ 부분 성공 | ❌ 실패 |\n`;
             commentBody += `|:---:|:---:|:---:|:---:|\n`;
             commentBody += `| ${total_problems}개 | ${passed_problems}개 | ${partial_passed_problems}개 | ${failed_problems}개 |\n\n`;
             
-            commentBody += `\n---\n🎉 **PR 제출이 확인되었습니다!** 테스트 결과와 상관없이 제출 현황이 README에 반영됩니다.`;
+            commentBody += `### 📋 제출 정보\n`;
+            commentBody += `- **제출자**: ${branchUser} ${isOwner ? '(저장소 소유자)' : ''}\n`;
+            if (!isOwner) {
+              commentBody += `- **주차**: Week ${weekNumber}\n`;
+            }
+            commentBody += `- **브랜치**: \`${{ github.event.pull_request.head.ref }}\`\n`;
+            commentBody += `- **저장소**: ${isFork ? '🔀 포크된 저장소' : '📍 원본 저장소'}\n\n`;
+            
+            if (isFork) {
+              commentBody += `### 📌 포크 환경 안내\n`;
+              commentBody += `- README 업데이트는 PR 머지 후 자동으로 처리됩니다.\n`;
+              commentBody += `- 테스트 결과와 상관없이 제출 현황이 반영됩니다.\n\n`;
+            }
+            
+            commentBody += `---\n🎉 **PR 제출이 확인되었습니다!** 테스트 결과와 상관없이 제출 현황이 README에 반영됩니다.`;
 
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -131,20 +347,36 @@ jobs:
             });
 
       - name: Send Mattermost DM Notification
-        if: github.event_name == 'pull_request' && always() && steps.analyze-results.outcome != 'skipped'
+        if: github.event_name == 'pull_request' && steps.branch-validation.outputs.valid == 'valid' && always() && steps.analyze-results.outcome != 'skipped'
         env:
-          PERSONAL_WEBHOOK_URL: ${{ secrets[format('{0}_MATTERMOST_URL', github.event.pull_request.user.login)] }}
+          PERSONAL_WEBHOOK_URL: ${{ secrets[format('{0}_MATTERMOST_URL', steps.branch-validation.outputs.branch_user)] }}
+          WEEK_NUMBER: ${{ steps.branch-validation.outputs.week_number }}
+          BRANCH_USER: ${{ steps.branch-validation.outputs.branch_user }}
+          IS_OWNER: ${{ steps.branch-validation.outputs.is_owner }}
         run: |
-          if [ "${{ steps.analyzer-results.outputs.overall_result }}" = "PASS" ]; then
-            echo "✅ 테스트 성공! 성공 알림을 전송합니다."
-            python scripts/send_success_notification.py "${{ github.event.pull_request.html_url }}" "${{ github.event.pull_request.user.login }}" "$PERSONAL_WEBHOOK_URL"
+          if [ -n "$PERSONAL_WEBHOOK_URL" ]; then
+            if [ "${{ steps.analyze-results.outputs.overall_result }}" = "PASS" ]; then
+              if [ "$IS_OWNER" = "true" ]; then
+                echo "✅ 저장소 소유자 테스트 성공! 성공 알림을 전송합니다."
+              else
+                echo "✅ Week $WEEK_NUMBER - $BRANCH_USER님 테스트 성공! 성공 알림을 전송합니다."
+              fi
+              python scripts/send_success_notification.py "${{ github.event.pull_request.html_url }}" "$BRANCH_USER" "$PERSONAL_WEBHOOK_URL"
+            else
+              if [ "$IS_OWNER" = "true" ]; then
+                echo "❌ 저장소 소유자 테스트 실패! 실패 알림을 전송합니다."
+              else
+                echo "❌ Week $WEEK_NUMBER - $BRANCH_USER님 테스트 실패! 실패 알림을 전송합니다."
+              fi
+              python scripts/send_failure_notification.py "${{ github.event.pull_request.html_url }}" "$BRANCH_USER" "$PERSONAL_WEBHOOK_URL"
+            fi
           else
-            echo "❌ 테스트 실패! 실패 알림을 전송합니다."
-            python scripts/send_failure_notification.py "${{ github.event.pull_request.html_url }}" "${{ github.event.pull_request.user.login }}" "$PERSONAL_WEBHOOK_URL"
+            echo "⚠️ $BRANCH_USER님의 Mattermost 웹훅 URL이 설정되지 않았습니다."
+            echo "💡 시크릿 이름: ${BRANCH_USER}_MATTERMOST_URL"
           fi
 
       # =================================================================
-      #  주간 실행 로직 (기존과 동일)
+      #  주간 실행 로직
       # =================================================================
       - name: Run Weekly Logic - Reset README for New Week
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
