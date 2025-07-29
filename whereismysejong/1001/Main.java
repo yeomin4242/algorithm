@@ -1,5 +1,5 @@
-import java.util.*;
 import java.io.*;
+import java.util.*;
 
 public class Main {
     public static void main(String[] args) throws IOException {
@@ -9,4 +9,4 @@ public class Main {
         StringTokenizer st = new StringTokenizer(br.readLine());
         System.out.println(Integer.parseInt(st.nextToken()) - Integer.parseInt(st.nextToken()));               
     }              
-}   
+}       
