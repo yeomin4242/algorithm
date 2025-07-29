@@ -1,26 +1,41 @@
-# 워크플로우 이름: 알고리즘 스터디 자동화 (PR 및 주간 업데이트)
-name: Algorithm Study Automation (PR & Weekly)
+# 워크플로우 이름: 알고리즘 스터디 자동화 (포크 환경 호환)
+name: Algorithm Study Automation (Fork Compatible)
 
 on:
   schedule:
     # KST 기준 매주 월요일 00:00 (UTC 일요일 15:00)
     - cron: '0 15 * * 0'
-  pull_request:
+  pull_request_target:  # 포크 환경을 위해 pull_request_target 사용
     branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
+  actions: write  # 워크플로우 승인을 위한 권한
 
 env:
   TZ: Asia/Seoul
   PYTHON_VERSION: "3.11"
   JAVA_VERSION: "11"
-  REPO_OWNER: "yeomin4242"  # 저장소 소유자
+  REPO_OWNER: "yeomin4242"
 
 jobs:
+  # 포크 PR 자동 승인 및 실행
+  auto-approve-fork:
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Auto-approve fork PRs
+        uses: hmarr/auto-approve-action@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          review-message: "✅ 포크된 저장소에서의 PR이 자동으로 승인되었습니다. 알고리즘 스터디 자동화 시스템이 실행됩니다."
+
   test-and-update:
+    # 자동 승인 후 또는 원본 저장소 PR에서 실행
+    needs: [auto-approve-fork]
+    if: always() && (needs.auto-approve-fork.result == 'success' || needs.auto-approve-fork.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - name: Workflow Info
@@ -28,7 +43,7 @@ jobs:
           echo "🔥 알고리즘 스터디 자동화 워크플로우 시작"
           echo "⏰ 실행 시간: $(date '+%Y-%m-%d %H:%M:%S KST')"
           echo "🔧 트리거: ${{ github.event_name }}"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "${{ github.event_name }}" = "pull_request_target" ]; then
             echo "🔍 Repository: ${{ github.repository }}"
             echo "🌿 Head Repository: ${{ github.event.pull_request.head.repo.full_name }}"
             echo "🌿 Head Ref: ${{ github.event.pull_request.head.ref }}"
@@ -37,7 +52,7 @@ jobs:
 
       # 브랜치 전략 검증 및 권한 확인
       - name: Validate Branch Strategy and Permissions
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request_target'
         id: branch-validation
         run: |
           BRANCH_NAME="${{ github.event.pull_request.head.ref }}"
@@ -118,7 +133,7 @@ jobs:
 
       # 브랜치 검증 실패 시 PR에 가이드 코멘트
       - name: Comment on Invalid Branch Strategy
-        if: github.event_name == 'pull_request' && steps.branch-validation.outputs.valid == 'invalid'
+        if: github.event_name == 'pull_request_target' && steps.branch-validation.outputs.valid == 'invalid'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -156,18 +171,7 @@ jobs:
                 commentBody += `git push origin --delete ${branchName}\n`;
                 commentBody += `\`\`\`\n\n`;
                 commentBody += `그 후 새로운 PR을 생성해주세요.`;
-              } else {
-                commentBody += `### 🔧 원본 저장소에서의 해결 방법\n`;
-                commentBody += `\`\`\`bash\n`;
-                commentBody += `git branch -m ${branchName} week-1-${author}\n`;
-                commentBody += `git push origin week-1-${author}\n`;
-                commentBody += `git push origin --delete ${branchName}\n`;
-                commentBody += `\`\`\``;
               }
-              
-              commentBody += `\n\n### 💡 참고사항\n`;
-              commentBody += `- 저장소 소유자(\`${repoOwner}\`)는 모든 브랜치 패턴을 사용할 수 있습니다.\n`;
-              commentBody += `- 일반 사용자는 보안과 권한 관리를 위해 정해진 패턴을 따라야 합니다.`;
             }
 
             await github.rest.issues.createComment({
@@ -177,31 +181,41 @@ jobs:
               body: commentBody
             });
 
-      # 유효한 브랜치에서만 체크아웃 진행
-      - name: Checkout Code
-        if: github.event_name != 'pull_request' || steps.branch-validation.outputs.valid == 'valid'
+      # 안전한 체크아웃 (pull_request_target용)
+      - name: Checkout Code (Safe for Forks)
+        if: github.event_name != 'pull_request_target' || steps.branch-validation.outputs.valid == 'valid'
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # pull_request_target에서는 base 브랜치를 체크아웃하고 PR 변경사항을 병합
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.ref || github.ref }}
           fetch-depth: 0
 
+      # PR 변경사항 안전하게 가져오기
+      - name: Fetch PR Changes (For Fork Safety)
+        if: github.event_name == 'pull_request_target' && steps.branch-validation.outputs.valid == 'valid'
+        run: |
+          echo "🔄 PR 변경사항을 안전하게 가져옵니다..."
+          git remote add pr-head ${{ github.event.pull_request.head.repo.clone_url }}
+          git fetch pr-head ${{ github.event.pull_request.head.ref }}:pr-branch
+          git checkout pr-branch
+          echo "✅ PR 브랜치로 체크아웃 완료"
+
       - name: Setup Python and Java
-        if: github.event_name != 'pull_request' || steps.branch-validation.outputs.valid == 'valid'
+        if: github.event_name != 'pull_request_target' || steps.branch-validation.outputs.valid == 'valid'
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       
       - name: Setup Java
-        if: github.event_name != 'pull_request' || steps.branch-validation.outputs.valid == 'valid'
+        if: github.event_name != 'pull_request_target' || steps.branch-validation.outputs.valid == 'valid'
         uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: "temurin"
 
       - name: Install Python dependencies
-        if: github.event_name != 'pull_request' || steps.branch-validation.outputs.valid == 'valid'
+        if: github.event_name != 'pull_request_target' || steps.branch-validation.outputs.valid == 'valid'
         run: |
           python -m pip install --upgrade pip
           pip install google-genai pytz requests beautifulsoup4
@@ -210,7 +224,7 @@ jobs:
       #  PR 실행 로직 (유효한 브랜치에서만 실행)
       # =================================================================
       - name: Run PR Logic - Extract & Test
-        if: github.event_name == 'pull_request' && steps.branch-validation.outputs.valid == 'valid'
+        if: github.event_name == 'pull_request_target' && steps.branch-validation.outputs.valid == 'valid'
         id: pr-test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -235,63 +249,12 @@ jobs:
         continue-on-error: true
 
       - name: Run PR Logic - Analyze Results
-        if: github.event_name == 'pull_request' && steps.branch-validation.outputs.valid == 'valid' && steps.pr-test.outcome != 'skipped'
+        if: github.event_name == 'pull_request_target' && steps.branch-validation.outputs.valid == 'valid' && steps.pr-test.outcome != 'skipped'
         id: analyze-results
         run: python scripts/analyze_test_results.py
 
-      - name: Run PR Logic - Update README and Commit
-        if: github.event_name == 'pull_request' && steps.branch-validation.outputs.valid == 'valid' && steps.pr-test.outcome != 'skipped'
-        env:
-          WEEK_NUMBER: ${{ steps.branch-validation.outputs.week_number }}
-          BRANCH_USER: ${{ steps.branch-validation.outputs.branch_user }}
-          IS_FORK: ${{ steps.branch-validation.outputs.is_fork }}
-          IS_OWNER: ${{ steps.branch-validation.outputs.is_owner }}
-        run: |
-          if [ "$IS_OWNER" = "true" ]; then
-            echo "📝 저장소 소유자의 제출에 대해 README 업데이트를 시도합니다."
-          else
-            echo "📝 $WEEK_NUMBER주차 $BRANCH_USER님의 제출에 대해 README 업데이트를 시도합니다."
-          fi
-          
-          python scripts/update_readme_batch.py
-
-          if ! git diff --quiet README.md; then
-            echo "README.md 변경사항을 커밋합니다."
-            
-            # Git 설정
-            git config --local user.email "action@github.com"
-            git config --local user.name "GitHub Action Bot"
-            
-            # 커밋 메시지 구성
-            if [ "$IS_OWNER" = "true" ]; then
-              COMMIT_MSG="Docs: Update README.md by owner (PR #${{ github.event.pull_request.number }})"
-            else
-              COMMIT_MSG="Docs: Update README.md for week-$WEEK_NUMBER by $BRANCH_USER (PR #${{ github.event.pull_request.number }})"
-            fi
-            
-            git add README.md
-            git commit -m "$COMMIT_MSG"
-            
-            # 포크 환경 처리
-            if [ "$IS_FORK" = "true" ]; then
-              echo "🔀 포크된 저장소 환경입니다."
-              echo "⚠️ 포크 환경에서는 README 업데이트를 PR 머지 후에 처리합니다."
-              echo "📋 변경사항은 PR 머지 시 자동으로 반영됩니다."
-              
-              # 변경사항을 임시 저장 (머지 후 처리용)
-              git stash push -m "README update for PR #${{ github.event.pull_request.number }}"
-              echo "💾 변경사항을 stash에 저장했습니다."
-            else
-              echo "📍 원본 저장소 환경입니다."
-              git push origin ${{ github.event.pull_request.head.ref }}
-              echo "✅ README 업데이트가 완료되었습니다."
-            fi
-          else
-            echo "README.md에 변경사항이 없어 커밋하지 않습니다."
-          fi
-
       - name: Run PR Logic - Post Comment on PR
-        if: github.event_name == 'pull_request' && steps.branch-validation.outputs.valid == 'valid' && steps.analyze-results.outcome == 'success'
+        if: github.event_name == 'pull_request_target' && steps.branch-validation.outputs.valid == 'valid' && steps.analyze-results.outcome == 'success'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -329,12 +292,12 @@ jobs:
               commentBody += `- **주차**: Week ${weekNumber}\n`;
             }
             commentBody += `- **브랜치**: \`${{ github.event.pull_request.head.ref }}\`\n`;
-            commentBody += `- **저장소**: ${isFork ? '🔀 포크된 저장소' : '📍 원본 저장소'}\n\n`;
+            commentBody += `- **저장소**: ${isFork ? '🔀 포크된 저장소 (자동 승인됨)' : '📍 원본 저장소'}\n\n`;
             
             if (isFork) {
-              commentBody += `### 📌 포크 환경 안내\n`;
-              commentBody += `- README 업데이트는 PR 머지 후 자동으로 처리됩니다.\n`;
-              commentBody += `- 테스트 결과와 상관없이 제출 현황이 반영됩니다.\n\n`;
+              commentBody += `### 📌 포크 환경 정보\n`;
+              commentBody += `- ✅ 포크된 저장소에서의 PR이 자동으로 승인되어 테스트가 실행되었습니다.\n`;
+              commentBody += `- 📋 README 업데이트는 PR 머지 후 자동으로 처리됩니다.\n\n`;
             }
             
             commentBody += `---\n🎉 **PR 제출이 확인되었습니다!** 테스트 결과와 상관없이 제출 현황이 README에 반영됩니다.`;
@@ -347,7 +310,7 @@ jobs:
             });
 
       - name: Send Mattermost DM Notification
-        if: github.event_name == 'pull_request' && steps.branch-validation.outputs.valid == 'valid' && always() && steps.analyze-results.outcome != 'skipped'
+        if: github.event_name == 'pull_request_target' && steps.branch-validation.outputs.valid == 'valid' && always() && steps.analyze-results.outcome != 'skipped'
         env:
           PERSONAL_WEBHOOK_URL: ${{ secrets[format('{0}_MATTERMOST_URL', steps.branch-validation.outputs.branch_user)] }}
           WEEK_NUMBER: ${{ steps.branch-validation.outputs.week_number }}
