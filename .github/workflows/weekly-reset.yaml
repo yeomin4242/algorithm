@@ -1,0 +1,54 @@
+name: Weekly README Reset
+
+on:
+  schedule:
+    # 매주 월요일 오전 0시 (KST) = 일요일 15시 (UTC)
+    - cron: "0 15 * * 0"
+  workflow_dispatch:
+    inputs:
+      force_reset:
+        description: "강제로 주간 리셋 실행"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  weekly-reset:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+
+      - name: Install dependencies
+        run: |
+          pip install pytz
+
+      - name: Run weekly reset
+        env:
+          FORCE_WEEKLY_RESET: ${{ github.event.inputs.force_reset || 'false' }}
+          TZ: "Asia/Seoul"
+        run: python scripts/weekly_reset.py
+
+      - name: Commit changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          if git diff --quiet; then
+            echo "변경사항이 없습니다."
+          else
+            git add README.md
+            git commit -m "🔄 주간 README 자동 초기화 ($(date +'%Y-%m-%d %H:%M' --date='TZ=\"Asia/Seoul\" now'))"
+            git push
+            echo "✅ README.md 주간 초기화 완료 및 커밋 성공"
+          fi
