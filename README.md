@@ -9,9 +9,10 @@
 
 | 참가자 | 월 | 화 | 수 | 목 | 금 | 토 | 일 |
 |--------|----|----|----|----|----|----|---|
-|        | 08/04 | 08/05 | 08/06 | 08/07 | 08/08 | 08/09 | 08/10 |
-| brightk123 | 2741 |  |  |  |  |  |  |
-| wanghoreng | 1193, 1978, 2501... |  |  |  |  |  |  |
+|        | 08/04 | 08/05 | 08/06 | 08/07 | 08/08 | 08/09 | 08/10 |
+| brightk123 | 2741 | 2523 |  |  |  |  |  |
+| danhye |  | 1000, 1546 |  |  |  |  |  |
+| wanghoreng | 1193, 1978, 2501 | 2581 |  |  |  |  |  |
 | yeomin4242 | 1037 |  |  |  |  |  |  |
 ## 🤖 자동화 시스템 소개
 
@@ -41,7 +42,6 @@ Repository Settings → Secrets and variables → Actions에서 다음 설정:
 
 ```
 GEMINI_API_KEY=your_gemini_api_key
-MATTERMOST_WEBHOOK_URL=your_default_channel_webhook  # 기본 채널용
 본인깃허브아이디_MATTERMOST_URL=your_personal_webhook  # 개인 DM용 (필수)
 ```
 
