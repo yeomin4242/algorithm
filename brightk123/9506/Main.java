@@ -48,7 +48,12 @@ public class Main {
 				System.out.println(" is NOT perfect.");
 			}
 			
-			num = sc.nextInt();
+			if(sc.hasNextInt()) {
+				num = sc.nextInt();
+			} else {
+				break;
+			}
+			
 			
 		}
 		
